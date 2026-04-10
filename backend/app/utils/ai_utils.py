@@ -1,8 +1,8 @@
 import logging
 import asyncio
-import json
 from typing import Any, Callable, Dict
 from datetime import datetime, timedelta
+import httpx
 
 import google.generativeai as genai
 from app.config import settings
@@ -143,6 +143,67 @@ class GeminiProvider:
         return {"data": None, "error": "AI call failed unexpectedly."}
 
 
+class OllamaProvider:
+    """
+    Ollama AI Provider for local inference using llama3.
+    """
+
+    def __init__(self):
+        self.url = f"{settings.OLLAMA_URL}/api/generate"
+        self.model = settings.OLLAMA_MODEL
+
+    async def generate_json(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> Dict[str, Any]:
+        """
+        Call local Ollama instance and return {'data': wrapped_response, 'error': str|None}.
+        """
+        # Ensure model is ready
+        payload = {
+            "model": self.model,
+            "prompt": f"System: {system_prompt}\n\nUser: {user_prompt}\n\nIMPORTANT: Return ONLY a valid JSON object.",
+            "stream": False,
+            "format": "json",
+            "options": {
+                "temperature": temperature
+            }
+        }
+
+        logger.info(f"Ollama Call: Using model {self.model} at {self.url}")
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.url, 
+                    json=payload, 
+                    timeout=httpx.Timeout(20.0, connect=5.0)
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                # Ollama returns the generated text in the 'response' field
+                text = data.get("response", "").strip()
+                
+                if not text:
+                    return {"data": None, "error": "Ollama returned an empty response."}
+
+                parsed = json.loads(text)
+                return {"data": _OllamaResponseWrapper(parsed), "error": None}
+
+        except httpx.ConnectError:
+            msg = "Local AI service (Ollama) is not running. Please run 'ollama run llama3' in your terminal."
+            logger.error(msg)
+            return {"data": None, "error": msg}
+        except httpx.TimeoutException:
+            msg = "Ollama request timed out (20s). Local model might be struggling or still loading."
+            logger.error(msg)
+            return {"data": None, "error": msg}
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse Ollama JSON: {e}")
+            return {"data": None, "error": "Ollama returned invalid JSON format."}
+        except Exception as e:
+            logger.error(f"Ollama unexpected error: {e}")
+            return {"data": None, "error": f"Local AI Error: {str(e)}"}
+
+
 # ── Compatibility wrappers ─────────────────────────────────────────────────────
 
 class _GeminiResponseWrapper:
@@ -161,12 +222,13 @@ class _Message:
         self.content = content
 
 
-# ── Singleton ─────────────────────────────────────────────────────────────────
+# ── Singletons ─────────────────────────────────────────────────────────────────
 ai_provider = GeminiProvider()
+ollama_provider = OllamaProvider()
 
 
 async def openai_safe_call(client_method: Callable, **kwargs) -> Dict[str, Any]:
-    """Drop-in replacement for old openai_safe_call. Routes to Gemini."""
+    """Routes all AI calls through the local Ollama provider."""
     messages = kwargs.get("messages", [])
     system_prompt = ""
     user_prompt = ""
@@ -179,8 +241,17 @@ async def openai_safe_call(client_method: Callable, **kwargs) -> Dict[str, Any]:
             user_prompt = content
 
     temperature = kwargs.get("temperature", 0.7)
-    return await ai_provider.generate_json(
+    
+    # WE ARE NOW ROUTING TO OLLAMA BY DEFAULT
+    return await ollama_provider.generate_json(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=temperature,
     )
+
+
+class _OllamaResponseWrapper:
+    """Mimics OpenAI response .choices[0].message.content for drop-in compat."""
+    def __init__(self, parsed_json: dict):
+        import json
+        self.choices = [_Choice(json.dumps(parsed_json))]

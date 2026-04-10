@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-1.5-flash"
 
+    # Ollama (Local AI)
+    OLLAMA_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "llama3"
+
     # File Storage
     UPLOAD_DIR: str = "uploads"
     MAX_FILE_SIZE_MB: int = 10
