@@ -24,7 +24,7 @@ import sys
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle (Triggered Reload)."""
-    logger.info("Starting AI Interview Bot backend with Gemini...")
+    logger.info("Starting AI Interview Bot backend with Local AI (Ollama)...")
     await create_tables()
     
     # Ensure upload directory exists

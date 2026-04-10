@@ -21,42 +21,65 @@ class AIHealthChecker:
 
     async def verify_connectivity(self) -> Dict[str, Any]:
         """
-        Performs a lightweight Gemini connectivity test at startup.
+        Performs connectivity tests for both Local (Ollama) and Cloud (Gemini) AI.
         """
         async with self._check_lock:
-            logger.info("--- [STARTUP] GEMINI AI CONNECTION TEST ---")
+            logger.info("--- [STARTUP] HYBRID AI CONNECTION TEST ---")
             diagnostics = {
                 "timestamp": __import__("datetime").datetime.now().isoformat(),
-                "ai_provider": "Google Gemini",
-                "model": settings.GEMINI_MODEL,
+                "local_ai": {"model": settings.OLLAMA_MODEL, "status": "PENDING"},
+                "cloud_ai": {"model": settings.GEMINI_MODEL, "status": "PENDING"}
             }
+
+            # 1. Test Ollama
             try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{settings.OLLAMA_URL}/api/generate",
+                        json={
+                            "model": settings.OLLAMA_MODEL,
+                            "prompt": "Reply with only the word: OK",
+                            "stream": False
+                        },
+                        timeout=3.0
+                    )
+                    data = response.json()
+                    if data.get("response"):
+                        diagnostics["local_ai"]["status"] = "CONNECTED"
+                        logger.info(f"Local AI (Ollama) Startup Test: SUCCESS")
+            except Exception as e:
+                diagnostics["local_ai"]["status"] = f"UNAVAILABLE: {type(e).__name__}"
+                logger.warning(f"Local AI (Ollama) Startup Test: UNAVAILABLE")
+
+            # 2. Test Gemini
+            try:
+                # Use a lightweight check via ai_provider (which uses genai)
                 genai.configure(api_key=settings.GEMINI_API_KEY)
                 model = genai.GenerativeModel(settings.GEMINI_MODEL)
                 response = await asyncio.to_thread(
                     model.generate_content,
-                    "Reply with only the word: OK",
+                    "OK",
                 )
-                result_text = response.text.strip()
-                self.ai_connected = True
-                self.last_error = None
-                logger.info(f"Gemini Startup Test: SUCCESS — response: {result_text}")
-                diagnostics["gemini_api"] = "CONNECTED"
+                if response.text:
+                    diagnostics["cloud_ai"]["status"] = "CONNECTED"
+                    logger.info(f"Cloud AI (Gemini) Startup Test: SUCCESS")
             except Exception as e:
-                self.ai_connected = False
-                self.last_error = f"[{type(e).__name__}] {str(e)}"
-                logger.error(f"Gemini Startup Test FAILED: {self.last_error}")
-                diagnostics["gemini_api"] = f"FAILED: {self.last_error}"
+                diagnostics["cloud_ai"]["status"] = f"FAILED: {str(e)[:100]}"
+                logger.warning(f"Cloud AI (Gemini) Startup Test: FAILED")
 
+            self.ai_connected = (diagnostics["local_ai"]["status"] == "CONNECTED" or 
+                                 diagnostics["cloud_ai"]["status"] == "CONNECTED")
+            self.last_error = diagnostics["cloud_ai"]["status"] if not self.ai_connected else None
             self.last_check_time = diagnostics["timestamp"]
+            
             return diagnostics
 
     def get_status(self) -> Dict[str, Any]:
         return {
             "server_status": "running",
-            "ai_provider": "Google Gemini",
-            "ai_connection": "connected" if self.ai_connected else "failed",
-            "last_error": self.last_error,
+            "ai_mode": "Hybrid (Local + Cloud)",
+            "ai_connection": "available" if self.ai_connected else "offline",
             "last_check": self.last_check_time
         }
 

@@ -228,7 +228,9 @@ ollama_provider = OllamaProvider()
 
 
 async def openai_safe_call(client_method: Callable, **kwargs) -> Dict[str, Any]:
-    """Routes all AI calls through the local Ollama provider."""
+    """
+    Hybrid AI Provider: Prioritizes local Ollama, falls back to Gemini if Ollama is down.
+    """
     messages = kwargs.get("messages", [])
     system_prompt = ""
     user_prompt = ""
@@ -242,12 +244,31 @@ async def openai_safe_call(client_method: Callable, **kwargs) -> Dict[str, Any]:
 
     temperature = kwargs.get("temperature", 0.7)
     
-    # WE ARE NOW ROUTING TO OLLAMA BY DEFAULT
-    return await ollama_provider.generate_json(
+    # 1. Attempt Local AI (Ollama)
+    result = await ollama_provider.generate_json(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=temperature,
     )
+
+    # 2. Check for connection-related errors to trigger fallback
+    if result["error"]:
+        err_msg = result["error"].lower()
+        is_service_down = any(k in err_msg for k in [
+            "not running", "connecterror", "connection attempts failed", 
+            "timeout", "refused", "11434"
+        ])
+
+        if is_service_down:
+            logger.warning(f"[FALLBACK] Local AI (Ollama) unavailable: {result['error']}. Routing to Cloud AI (Gemini)...")
+            # 3. Fallback to Gemini
+            return await ai_provider.generate_json(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=temperature,
+            )
+
+    return result
 
 
 class _OllamaResponseWrapper:
