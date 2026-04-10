@@ -6,6 +6,7 @@ from datetime import datetime
 class CandidateCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
     mobile: str = Field(..., min_length=10, max_length=20)
+    email: Optional[str] = Field(None, max_length=255)
     position: Optional[str] = None
 
 
@@ -13,12 +14,15 @@ class CandidateResponse(BaseModel):
     id: int
     name: str
     mobile: str
+    email: Optional[str]
     position: Optional[str]
     status: str
     resume_summary: Optional[str] = None
     current_stage: Optional[str] = None
     last_ai_error: Optional[str] = None
     total_score: Optional[float]
+    interview_start_time: Optional[datetime] = None
+    interview_end_time: Optional[datetime] = None
     created_at: datetime
 
     class Config:
@@ -29,12 +33,15 @@ class CandidateListResponse(BaseModel):
     id: int
     name: str
     mobile: str
+    email: Optional[str]
     position: Optional[str]
     status: str
     resume_summary: Optional[str] = None
     current_stage: Optional[str] = None
     last_ai_error: Optional[str] = None
     total_score: Optional[float]
+    interview_start_time: Optional[datetime] = None
+    interview_end_time: Optional[datetime] = None
     created_at: datetime
 
     class Config:

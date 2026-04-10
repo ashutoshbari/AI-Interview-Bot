@@ -1,204 +1,109 @@
-# AI Interview Bot
+# 🚀 AI Interview Bot (v2.0) - Local & Hybrid AI
 
-An AI-powered interview platform that generates personalized technical interview questions from a candidate's resume, evaluates answers in real-time using OpenAI, and produces a structured final report.
-
----
-
-## 🏗️ Architecture
-
-```
-AI_bot/
-├── backend/          ← FastAPI + PostgreSQL + OpenAI
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── models/      (candidate, interview)
-│   │   ├── schemas/     (candidate, interview)
-│   │   ├── routers/     (candidates, interviews, reports, admin)
-│   │   ├── services/    (resume_parser, question_gen, evaluator, report_gen)
-│   │   └── utils/       (pdf_export)
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/         ← Next.js 14 + Tailwind CSS
-│   ├── app/
-│   │   ├── page.tsx                ← Registration page
-│   │   ├── interview/page.tsx      ← Interview page
-│   │   └── report/page.tsx         ← Report page
-│   ├── lib/api.ts
-│   └── Dockerfile
-├── docker-compose.yml
-└── README.md
-```
+A production-grade AI-powered interview platform that generates personalized technical interviews from candidate resumes, evaluates responses in real-time, and provides automated feedback via email.
 
 ---
 
-## ⚡ Quick Start (Docker — Recommended)
+## 🌟 Key Features
 
-### Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- OpenAI API key
+- **🧠 Local AI Inference**: Integrated with **Ollama (llama3)** to run the entire backend for free on your local machine.
+- **🛡️ Hybrid Fallback**: Automatically switches to **Google Gemini** if your local AI service is offline, ensuring 100% uptime.
+- **📧 Automated Email System**: Syncs candidate progress with beautifully formatted HTML emails for registration, interview completion (score & feedback), and reminders.
+- **📈 Real-time Status Tracking**: Monitor interview lifecycles with statuses: `NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, and `FAILED`.
+- **✍️ Voice & Text**: Supports real-time transcription for a natural chat+voice interview experience.
+- **📊 Precise Reporting**: Generates detailed PDF reports with technical, clarity, and communication scores.
 
-### 1. Set up environment
+---
 
+## 🏗️ Technical Architecture
+
+### **Backend: FastAPI (Python)**
+- **Async Processing**: Fast performance with background task handling for emails and AI evaluations.
+- **Database**: SQLite (default) for zero-config portable storage.
+- **Inference Engines**: Ollama (Primary) / Google Gemini (Fallback).
+- **Communication**: SMTP/Gmail/SendGrid for automated notifications.
+
+### **Frontend: Next.js (React)**
+- **Tailwind CSS**: Modern, premium dark-mode aesthetics.
+- **Framer Motion**: Smooth micro-animations and transitions.
+- **Real-time UI**: Dynamic loading states and status tracking.
+
+---
+
+## 🛠️ Setup Instructions
+
+### 1. Requirements
+- Python 3.10+
+- Node.js 18+
+- [Ollama](https://ollama.com) (Optional but recommended for free local AI)
+
+### 2. Configure Local AI (Ollama)
+Install Ollama and pull the Llama3 model:
+```bash
+ollama run llama3
+```
+
+### 3. Backend Setup
 ```bash
 cd backend
-copy .env.example .env
-```
-
-Edit `backend/.env` and add your **OpenAI API key**:
-```
-OPENAI_API_KEY=sk-your-key-here
-```
-
-### 2. Start all services
-
-```bash
-cd AI_bot
-docker-compose up --build
-```
-
-### 3. Open the app
-
-| Service  | URL                       |
-|----------|---------------------------|
-| Frontend | http://localhost:3000     |
-| Backend API | http://localhost:8000  |
-| API Docs | http://localhost:8000/docs |
-
----
-
-## 🛠️ Local Development (Without Docker)
-
-### Backend
-
-**Requirements:** Python 3.11+, PostgreSQL running locally
-
-```bash
-cd backend
-
-# Create virtual environment
 python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # Linux/Mac
-
-# Install dependencies
+venv\Scripts\activate
 pip install -r requirements.txt
-
-# Set up environment
-copy .env.example .env
-# Edit .env → set DATABASE_URL and OPENAI_API_KEY
-
-# Run backend
-uvicorn app.main:app --reload --port 8000
 ```
 
-### Frontend
+Create a `.env` file in `/backend`:
+```env
+# AI Providers
+GEMINI_API_KEY=your_key_here
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=llama3
 
-**Requirements:** Node.js 18+
+# Email (SMTP)
+MAIL_USERNAME=your_email@gmail.com
+MAIL_PASSWORD=your_app_password
+MAIL_FROM=your_email@gmail.com
+MAIL_SERVER=smtp.gmail.com
+MAIL_PORT=587
+```
 
+### 4. Frontend Setup
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Set up environment
-copy .env.local.example .env.local   # or edit .env.local directly
-
-# Run frontend
 npm run dev
 ```
 
-Frontend runs at **http://localhost:3000**
-
 ---
 
-## 🔑 Environment Variables
-
-### Backend (`backend/.env`)
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL async URL | `postgresql+asyncpg://postgres:postgres@localhost:5432/ai_interview` |
-| `OPENAI_API_KEY` | OpenAI secret key | `sk-...` |
-| `OPENAI_MODEL` | GPT model to use | `gpt-4o-mini` |
-| `UPLOAD_DIR` | Resume upload folder | `uploads` |
-| `MAX_FILE_SIZE_MB` | Max resume size | `10` |
-
-### Frontend (`frontend/.env.local`)
-
-| Variable | Description |
-|----------|-------------|
-| `NEXT_PUBLIC_API_URL` | Backend base URL (e.g. `http://localhost:8000`) |
-
----
-
-## 📡 API Reference
+## 📡 API Reference & Tracking
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/candidates/register` | Upload resume, register candidate |
-| `GET` | `/api/candidates/{id}/status` | Poll question generation status |
-| `GET` | `/api/interviews/{id}/questions` | Get all generated questions |
-| `POST` | `/api/interviews/{id}/answer` | Submit answer → get evaluation |
-| `GET` | `/api/reports/{id}` | Generate/get final report |
-| `GET` | `/api/reports/{id}/pdf` | Download report as PDF |
-| `GET` | `/api/admin/candidates` | List all candidates (admin) |
-| `GET` | `/health` | Health check |
-
-Full interactive docs: **http://localhost:8000/docs**
+| `POST` | `/api/candidates/register` | Register & start (Status: `NOT_STARTED`) |
+| `GET`  | `/api/interviews/questions` | Fetch questions (Status -> `IN_PROGRESS`) |
+| `GET`  | `/api/reports/{id}` | Finalize & score (Status -> `COMPLETED`) |
+| `POST` | `/api/admin/mark-failed/{id}` | Mark as stagnant (Status -> `FAILED`) |
 
 ---
 
-## 🎯 Interview Flow
+## 🎯 Automated Email Workflows
 
-```
-Registration Page
-    ↓ (upload resume → form submit)
-Loading Screen
-    ↓ (backend parses resume, generates 12 questions via OpenAI)
-Interview Page  ← one question at a time, 90s timer
-    ↓ (submit each answer → OpenAI evaluates in real-time)
-Report Page
-    ↓
-PDF Download
-```
+1. **Registration**: Dynamic "Welcome" email sent upon resume upload.
+2. **Completion**: Professional Results email sent including:
+    - Overall Score (0-10)
+    - Detailed Technical Feedback
+    - Key Improvement Suggestions
+3. **Reminders**: Admin-triggered reminders for incomplete interviews.
 
 ---
 
-## 📊 Question Types (12 total)
+## ✅ Deployment Checklist
 
-| Type | Count | Description |
-|------|-------|-------------|
-| Technical | 5 | Skills and tools from resume |
-| Project Deep-Dive | 3 | Specific projects listed |
-| Behavioral | 2 | Work history and situations |
-| Logical/Problem Solving | 2 | Relevant to their tech stack |
+- [x] Run `ollama run llama3` for free inference.
+- [x] Configure SMTP in `.env` for email automation.
+- [x] Set `GEMINI_API_KEY` for 100% uptime fallback.
+- [x] Check backend logs for real-time status tracking updates.
 
 ---
 
-## 📋 Database Schema
-
-```sql
--- candidates
-id, name, mobile, position, resume_path, resume_text,
-total_score, report_json, status, created_at, updated_at
-
--- interviews
-id, candidate_id (FK), question_order, question_type,
-question, answer, technical_score, clarity_score,
-depth_score, communication_score, feedback, created_at
-```
-
----
-
-## ✅ Production Checklist
-
-- [ ] Set strong `POSTGRES_PASSWORD` in docker-compose
-- [ ] Set real `OPENAI_API_KEY`
-- [ ] Set `NEXT_PUBLIC_API_URL` to your domain in frontend
-- [ ] Use a reverse proxy (nginx) in front of both services
-- [ ] Enable HTTPS (Let's Encrypt / Certbot)
-- [ ] Set up regular database backups
-- [ ] Add rate limiting to the API
+Developed with ❤️ using FastAPI, Next.js, and local Llama3.

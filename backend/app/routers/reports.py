@@ -1,6 +1,6 @@
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models.candidate import Candidate
 from app.models.interview import Interview
 from app.services.report_gen import generate_final_report
+from app.services.email_service import email_manager
 from app.utils.pdf_export import generate_pdf_report
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,11 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 
 @router.get("/{candidate_id}")
-async def get_report(candidate_id: int, db: AsyncSession = Depends(get_db)):
+async def get_report(
+    candidate_id: int, 
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
     """Get (or generate) the final report for a candidate."""
     cand_result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
     candidate = cand_result.scalar_one_or_none()
@@ -65,11 +70,22 @@ async def get_report(candidate_id: int, db: AsyncSession = Depends(get_db)):
     )
 
     # Compute aggregate score and save
+    import datetime
     overall = report.get("overall_score", 0)
     candidate.total_score = float(overall)
-    candidate.status = "completed"
+    candidate.status = "COMPLETED"
+    candidate.interview_end_time = datetime.datetime.now(datetime.timezone.utc)
     candidate.report_json = json.dumps(report)
     await db.commit()
+
+    # Automated Email: Completion Feedback
+    if candidate.email:
+        background_tasks.add_task(
+            email_manager.send_completion_email,
+            email=candidate.email,
+            name=candidate.name,
+            report=report
+        )
 
     return report
 

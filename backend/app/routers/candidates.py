@@ -4,7 +4,7 @@ import json
 import logging
 import aiofiles
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -13,6 +13,7 @@ from app.models.candidate import Candidate
 from app.models.interview import Interview
 from app.schemas.candidate import CandidateResponse
 from app.services.resume_parser import extract_resume_text
+from app.services.email_service import email_manager
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -25,8 +26,10 @@ ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx"}
 
 @router.post("/register", response_model=CandidateResponse, status_code=201)
 async def register_candidate(
+    background_tasks: BackgroundTasks,
     name: str = Form(...),
     mobile: str = Form(...),
+    email: str = Form(None),
     position: str = Form(default="Software Engineer"),
     resume: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
@@ -114,17 +117,28 @@ async def register_candidate(
             candidate = Candidate(
                 name=name,
                 mobile=mobile_digits,
+                email=email,
                 position=position.strip() or "Software Engineer",
                 resume_path=str(file_path),
                 resume_text=resume_text,
                 resume_summary=summary_json,
-                status="registered",
+                status="NOT_STARTED",
                 last_ai_error=summary_data.get("error") if "error" in summary_data else None
             )
             db.add(candidate)
             await db.commit()
             await db.refresh(candidate)
-            logger.info(f"DB Record Created: ID {candidate.id} for {candidate.name} with summary")
+
+            # 7. Automated Email: Status Update
+            if candidate.email:
+                background_tasks.add_task(
+                    email_manager.send_status_update,
+                    email=candidate.email,
+                    name=candidate.name,
+                    status="Interview Ready (NOT_STARTED)"
+                )
+
+            logger.info(f"DB Record Created: ID {candidate.id} for {candidate.name}")
             return candidate
         except Exception as e:
             logger.error(f"Database/AI Error during registration: {e}", exc_info=True)

@@ -28,6 +28,7 @@ export default function RegistrationPage() {
   const [step, setStep] = useState<Step>('form');
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
+  const [email, setEmail] = useState('');
   const [position, setPosition] = useState('Software Engineer');
   const [resume, setResume] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -41,6 +42,7 @@ export default function RegistrationPage() {
     if (!name.trim() || name.trim().length < 2) newErrors.name = 'Full name must be at least 2 characters';
     const digits = mobile.replace(/\D/g, '');
     if (digits.length < 10) newErrors.mobile = 'Enter a valid 10-digit mobile number';
+    if (!email.trim() || !/^\S+@\S+\.\S+$/.test(email)) newErrors.email = 'Enter a valid email address';
     if (!resume) newErrors.resume = 'Please upload your resume (PDF or DOC/DOCX)';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -96,6 +98,7 @@ export default function RegistrationPage() {
       const formData = new FormData();
       formData.append('name', name.trim());
       formData.append('mobile', mobile.trim());
+      formData.append('email', email.trim());
       formData.append('position', position);
       formData.append('resume', resume!);
       const candidate = await registerCandidate(formData);
@@ -216,6 +219,19 @@ export default function RegistrationPage() {
               className={`input-field ${errors.mobile ? 'ring-2 ring-red-500 border-red-500' : ''}`}
             />
             {errors.mobile && <p className="text-red-400 text-xs mt-1">{errors.mobile}</p>}
+          </div>
+
+          {/* Email Address */}
+          <div>
+            <label className="block text-sm font-medium text-white/70 mb-1.5">Email Address *</label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="e.g. rahul@example.com"
+              className={`input-field ${errors.email ? 'ring-2 ring-red-500 border-red-500' : ''}`}
+            />
+            {errors.email && <p className="text-red-400 text-xs mt-1">{errors.email}</p>}
           </div>
 
           {/* Position */}

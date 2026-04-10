@@ -1,7 +1,7 @@
 import logging
 import os
 import tempfile
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -12,18 +12,38 @@ from app.schemas.interview import QuestionResponse, AnswerSubmit, EvaluationResp
 from app.services.evaluator import evaluate_answer
 from app.services.question_gen import generate_next_question
 from app.services.transcriber import transcribe_audio
+from app.services.email_service import email_manager
 
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
 @router.get("/{candidate_id}/questions", response_model=list[QuestionResponse])
-async def get_questions(candidate_id: int, db: AsyncSession = Depends(get_db)):
+async def get_questions(
+    candidate_id: int, 
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
     """Return the current active question or generate the first one."""
     result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
     
-    # Check if we have any questions yet
+    # 1. Update status to IN_PROGRESS on first access
+    if candidate.status == "NOT_STARTED":
+        import datetime
+        candidate.status = "IN_PROGRESS"
+        candidate.interview_start_time = datetime.datetime.now(datetime.timezone.utc)
+        await db.commit()
+        
+        if candidate.email:
+            background_tasks.add_task(
+                email_manager.send_status_update,
+                email=candidate.email,
+                name=candidate.name,
+                status="Interview Started (IN_PROGRESS)"
+            )
+
+    # 2. Check if we have any questions yet
     q_result = await db.execute(
         select(Interview)
         .where(Interview.candidate_id == candidate_id)
@@ -69,6 +89,7 @@ async def get_questions(candidate_id: int, db: AsyncSession = Depends(get_db)):
 async def submit_answer(
     candidate_id: int,
     payload: AnswerSubmit,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     """Submit an answer, evaluate it, and generate the next question dynamically."""
@@ -138,11 +159,20 @@ async def submit_answer(
             question=next_q_record.question
         )
 
+    old_status = candidate.status
     if candidate.status == "questions_ready" or candidate.status == "registered":
         candidate.status = "in_progress"
     
     if is_complete:
         candidate.status = "completed"
+
+    if old_status != candidate.status and candidate.email:
+        background_tasks.add_task(
+            email_manager.send_status_update,
+            email=candidate.email,
+            name=candidate.name,
+            status=f"Interview Status: {candidate.status}"
+        )
 
     await db.commit()
 

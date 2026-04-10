@@ -8,13 +8,16 @@ class Candidate(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     mobile = Column(String(20), nullable=False)
+    email = Column(String(255), nullable=True, index=True)
     position = Column(String(255), nullable=True)
     resume_path = Column(String(500), nullable=False)
     resume_text = Column(Text, nullable=True)
     resume_summary = Column(Text, nullable=True)  # Condenced version for optimized prompts
     total_score = Column(Float, nullable=True)
     report_json = Column(Text, nullable=True)  # JSON string of the final report
-    status = Column(String(50), default="registered")  # registered | questions_ready | in_progress | completed
+    status = Column(String(50), default="NOT_STARTED")  # NOT_STARTED | IN_PROGRESS | COMPLETED | FAILED
+    interview_start_time = Column(DateTime(timezone=True), nullable=True)
+    interview_end_time = Column(DateTime(timezone=True), nullable=True)
     current_stage = Column(String(50), default="greeting")  # greeting | experience | project | technical | behavioral
     last_ai_error = Column(Text, nullable=True)  # For diagnostic tracking
     created_at = Column(DateTime(timezone=True), server_default=func.now())
