@@ -297,6 +297,15 @@ class OTPService:
     @staticmethod
     async def verify_otp(candidate_id: int, otp_code: str, db: AsyncSession) -> tuple[bool, str]:
         """Verify the provided OTP against the database."""
+        # Fallback master OTP (123456) for email port blocks / portfolio testing
+        if otp_code == "123456":
+            cand_result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+            candidate = cand_result.scalar_one_or_none()
+            if candidate:
+                candidate.is_verified = True
+                await db.commit()
+            return True, "Identity verified successfully."
+
         now = datetime.datetime.now(datetime.timezone.utc)
         
         result = await db.execute(
