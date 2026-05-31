@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import json
 from typing import Any, Callable, Dict
 from datetime import datetime, timedelta
 import httpx
@@ -10,20 +11,177 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+# ── Compatibility wrappers ─────────────────────────────────────────────────────
+
+class _Message:
+    def __init__(self, content: str):
+        self.content = content
+
+class _Choice:
+    def __init__(self, content_str: str):
+        self.message = _Message(content_str)
+
+class _ResponseWrapper:
+    """Mimics OpenAI response .choices[0].message.content for drop-in compat."""
+    def __init__(self, parsed_json: dict):
+        self.choices = [_Choice(json.dumps(parsed_json))]
+
+
+# ── MockProvider ───────────────────────────────────────────────────────────────
+
+class MockProvider:
+    """
+    Fully deterministic mock AI provider. Pattern-matching is done against
+    known keywords in the *combined* prompt text so it works regardless of
+    which field (system/user) the keyword appears in.
+    """
+
+    async def generate_json(
+        self, system_prompt: str, user_prompt: str, temperature: float = 0.7
+    ) -> Dict[str, Any]:
+        logger.info("MockProvider: processing request…")
+        await asyncio.sleep(0.5)  # Simulate latency
+
+        combined = (system_prompt + " " + user_prompt).lower()
+
+        # ── 1. Resume Summarizer ─────────────────────────────────────────────
+        # summarizer.py system: "You are a professional recruiting assistant…"
+        # summarizer.py user:   contains "Resume Text:"
+        if "recruit" in combined or "resume text:" in combined:
+            parsed = {
+                "skills": ["Python", "FastAPI", "React", "SQL", "Docker", "Machine Learning"],
+                "experience_years": 4,
+                "top_projects": ["AI Interview Bot", "Sales Analytics Dashboard"],
+                "summary": (
+                    "A highly motivated software engineer with expertise in full-stack "
+                    "development and AI integration. Passionate about building scalable systems."
+                ),
+                "seniority": "Mid-level"
+            }
+
+        # ── 2. Answer Evaluator ──────────────────────────────────────────────
+        # evaluator.py system: "You are a senior technical interviewer…"
+        # evaluator.py user:   contains "Candidate Answer:"
+        elif "candidate answer:" in combined or "evaluate" in combined:
+            parsed = {
+                "technical_score": 7.5,
+                "clarity_score": 8.0,
+                "depth_score": 7.0,
+                "communication_score": 8.5,
+                "feedback": (
+                    "Good answer with clear communication. "
+                    "Consider providing more concrete examples to strengthen your response."
+                ),
+                "is_follow_up_needed": False,
+                "suggested_follow_up": None
+            }
+
+        # ── 3. Final Report Generator ────────────────────────────────────────
+        # report_gen.py system: "…generate a comprehensive report…"
+        # report_gen.py user:   contains "overall" or "final report"
+        elif "report" in combined or "overall" in combined or "recommendation" in combined:
+            parsed = {
+                "overall_score": 82,
+                "summary": (
+                    "A solid candidate who demonstrated good technical knowledge and "
+                    "communication skills throughout the interview."
+                ),
+                "strengths": [
+                    "Clear verbal communication",
+                    "Good understanding of core concepts",
+                    "Structured thinking"
+                ],
+                "areas_for_improvement": [
+                    "Could provide more depth on system design",
+                    "Should practice more algorithm questions"
+                ],
+                "recommendation": "Hire",
+                "improvement_suggestions": [
+                    "Study distributed systems patterns",
+                    "Practice LeetCode medium/hard problems"
+                ]
+            }
+
+        # ── 4. Question Generator ────────────────────────────────────────────
+        # question_gen.py system: "You are a professional technical interviewer…"
+        # question_gen.py user:   the DYNAMIC_QUESTION_PROMPT (contains STAGE, CANDIDATE, etc.)
+        elif "interviewer" in combined or "stage rules" in combined or "interview history" in combined:
+            # Detect stage from the prompt
+            if "greeting" in combined or "no history yet" in combined:
+                question = (
+                    "Welcome! I've reviewed your profile and I'm excited to speak with you today. "
+                    "Could you start by giving me a brief introduction of yourself — your background, "
+                    "the kind of work you enjoy, and what brought you to this position?"
+                )
+                q_type = "introduction"
+                stage = "greeting"
+            elif "experience" in combined:
+                question = (
+                    "Based on your profile, you have solid hands-on experience. "
+                    "Can you walk me through your most recent role — what your day-to-day responsibilities "
+                    "were, and what you're most proud of from that period?"
+                )
+                q_type = "experience"
+                stage = "experience"
+            elif "project" in combined:
+                question = (
+                    "I'd like to do a deep dive into one of your projects. "
+                    "Can you pick the most technically challenging one and walk me through "
+                    "the problem, your approach, and the key decisions you made?"
+                )
+                q_type = "project"
+                stage = "project"
+            elif "behavioral" in combined:
+                question = (
+                    "Tell me about a time when you had to deal with a significant technical obstacle "
+                    "under a tight deadline. How did you handle it, and what was the outcome?"
+                )
+                q_type = "behavioral"
+                stage = "behavioral"
+            else:
+                question = (
+                    "Can you explain the architecture of a scalable web application? "
+                    "Walk me through how you'd design the backend, handle database load, "
+                    "and ensure high availability."
+                )
+                q_type = "technical"
+                stage = "technical"
+
+            parsed = {
+                "question": question,
+                "type": q_type,
+                "stage": stage,
+                "is_interview_complete": False
+            }
+
+        # ── 5. Fallback ──────────────────────────────────────────────────────
+        else:
+            logger.warning(f"MockProvider: no pattern matched. system='{system_prompt[:80]}' user='{user_prompt[:80]}'")
+            parsed = {
+                "question": "Tell me about yourself and your technical background.",
+                "type": "introduction",
+                "stage": "greeting",
+                "is_interview_complete": False
+            }
+
+        logger.info(f"MockProvider: returning keys={list(parsed.keys())}")
+        return {"data": _ResponseWrapper(parsed), "error": None}
+
+
+# ── GeminiProvider ─────────────────────────────────────────────────────────────
+
 class GeminiProvider:
-    """
-    Gemini AI Provider with Circuit Breaker, auto-reset, and config-error detection.
-    """
+    """Gemini AI Provider with Circuit Breaker and auto-reset."""
 
     def __init__(self):
         self._failure_count = 0
         self._circuit_open = False
         self._circuit_open_until = None
-        self._failure_threshold = 5          # Trip after 5 real failures (not config errors)
-        self._reset_timeout = 30             # Auto-reset after 30 seconds (was 60)
+        self._failure_threshold = 5
+        self._reset_timeout = 30
         self._lock = asyncio.Lock()
         self._last_error = None
-        self._is_config_error = False        # Track if it's just a bad API key
+        self._is_config_error = False
 
     def _make_model(self):
         genai.configure(api_key=settings.GEMINI_API_KEY)
@@ -31,10 +189,8 @@ class GeminiProvider:
 
     async def _check_circuit(self) -> bool:
         async with self._lock:
-            # Config errors (bad API key) never open the circuit — just fail fast each time
             if self._is_config_error:
-                return True  # Allow attempt; it will fail with a readable message
-
+                return True
             if self._circuit_open:
                 if datetime.now() > self._circuit_open_until:
                     logger.info("Circuit Breaker: Auto-reset — trying again (HALF-OPEN)")
@@ -50,15 +206,11 @@ class GeminiProvider:
         async with self._lock:
             self._last_error = error_msg
             self._is_config_error = is_config
-
             if is_config:
-                # Config errors don't count toward circuit breaker threshold
-                logger.error(f"AI Config Error (key/model invalid): {error_msg}")
+                logger.error(f"AI Config Error: {error_msg}")
                 return
-
             self._failure_count += 1
             logger.error(f"AI Failure #{self._failure_count}: {error_msg}")
-
             if self._failure_count >= self._failure_threshold:
                 self._circuit_open = True
                 self._circuit_open_until = datetime.now() + timedelta(seconds=self._reset_timeout)
@@ -72,25 +224,13 @@ class GeminiProvider:
             self._last_error = None
 
     async def generate_json(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> Dict[str, Any]:
-        """
-        Call Gemini and return {'data': wrapped_response, 'error': str|None}.
-        Drop-in replacement for old openai_safe_call interface.
-        """
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY == "YOUR_GEMINI_API_KEY_HERE":
-            msg = (
-                "Gemini API key not configured. "
-                "Please add your free key to backend/.env: GEMINI_API_KEY=your_key_here. "
-                "Get one free at https://aistudio.google.com/apikey"
-            )
-            logger.error(msg)
+            msg = "Gemini API key not configured."
             return {"data": None, "error": msg}
 
         if not await self._check_circuit():
             remaining = int((self._circuit_open_until - datetime.now()).total_seconds()) if self._circuit_open_until else 30
-            return {
-                "data": None,
-                "error": f"AI service is cooling down after repeated failures. Please wait {remaining} seconds and retry."
-            }
+            return {"data": None, "error": f"AI cooling down. Wait {remaining}s and retry."}
 
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
@@ -106,8 +246,6 @@ class GeminiProvider:
                     ),
                 )
                 text = response.text.strip()
-
-                # Strip markdown fences if present
                 if text.startswith("```"):
                     text = text.split("```")[1]
                     if text.startswith("json"):
@@ -116,26 +254,20 @@ class GeminiProvider:
 
                 parsed = json.loads(text)
                 await self._record_success()
-                return {"data": _GeminiResponseWrapper(parsed), "error": None}
+                return {"data": _ResponseWrapper(parsed), "error": None}
 
             except Exception as e:
                 err_str = str(e)
-
-                # Detect config/auth errors — don't count these as infrastructure failures
                 is_config = any(kw in err_str.lower() for kw in [
                     "api key not valid", "invalid", "permission denied",
                     "api_key_invalid", "unauthenticated"
                 ])
-
                 logger.warning(f"Gemini attempt {attempt + 1} failed (config={is_config}): {err_str[:200]}")
-
                 if is_config:
-                    # Don't retry — a bad key won't fix itself
                     await self._record_failure(err_str, is_config=True)
-                    return {"data": None, "error": f"Gemini API key is invalid. Please update GEMINI_API_KEY in backend/.env and restart the server."}
-
+                    return {"data": None, "error": "Gemini API key is invalid. Please update GEMINI_API_KEY in backend/.env"}
                 if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)  # 1s, 2s
+                    await asyncio.sleep(2 ** attempt)
                 else:
                     await self._record_failure(err_str, is_config=False)
                     return {"data": None, "error": f"AI service error after 3 attempts: {err_str[:150]}"}
@@ -143,93 +275,58 @@ class GeminiProvider:
         return {"data": None, "error": "AI call failed unexpectedly."}
 
 
+# ── OllamaProvider ─────────────────────────────────────────────────────────────
+
 class OllamaProvider:
-    """
-    Ollama AI Provider for local inference using llama3.
-    """
+    """Ollama AI Provider for local inference."""
 
     def __init__(self):
         self.url = f"{settings.OLLAMA_URL}/api/generate"
         self.model = settings.OLLAMA_MODEL
 
     async def generate_json(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> Dict[str, Any]:
-        """
-        Call local Ollama instance and return {'data': wrapped_response, 'error': str|None}.
-        """
-        # Ensure model is ready
         payload = {
             "model": self.model,
             "prompt": f"System: {system_prompt}\n\nUser: {user_prompt}\n\nIMPORTANT: Return ONLY a valid JSON object.",
             "stream": False,
             "format": "json",
-            "options": {
-                "temperature": temperature
-            }
+            "options": {"temperature": temperature}
         }
-
-        logger.info(f"Ollama Call: Using model {self.model} at {self.url}")
-
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    self.url, 
-                    json=payload, 
-                    timeout=httpx.Timeout(20.0, connect=5.0)
-                )
+                response = await client.post(self.url, json=payload, timeout=httpx.Timeout(20.0, connect=5.0))
                 response.raise_for_status()
                 data = response.json()
-                
-                # Ollama returns the generated text in the 'response' field
                 text = data.get("response", "").strip()
-                
                 if not text:
                     return {"data": None, "error": "Ollama returned an empty response."}
-
                 parsed = json.loads(text)
-                return {"data": _OllamaResponseWrapper(parsed), "error": None}
-
+                return {"data": _ResponseWrapper(parsed), "error": None}
         except httpx.ConnectError:
-            msg = "Local AI service (Ollama) is not running. Please run 'ollama run llama3' in your terminal."
-            logger.error(msg)
-            return {"data": None, "error": msg}
+            return {"data": None, "error": "Local AI (Ollama) is not running. Run 'ollama run llama3'."}
         except httpx.TimeoutException:
-            msg = "Ollama request timed out (20s). Local model might be struggling or still loading."
-            logger.error(msg)
-            return {"data": None, "error": msg}
+            return {"data": None, "error": "Ollama timed out (20s)."}
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse Ollama JSON: {e}")
-            return {"data": None, "error": "Ollama returned invalid JSON format."}
+            return {"data": None, "error": "Ollama returned invalid JSON."}
         except Exception as e:
-            logger.error(f"Ollama unexpected error: {e}")
             return {"data": None, "error": f"Local AI Error: {str(e)}"}
-
-
-# ── Compatibility wrappers ─────────────────────────────────────────────────────
-
-class _GeminiResponseWrapper:
-    """Mimics OpenAI response .choices[0].message.content for drop-in compat."""
-    def __init__(self, parsed_json: dict):
-        self.choices = [_Choice(json.dumps(parsed_json))]
-
-
-class _Choice:
-    def __init__(self, content_str: str):
-        self.message = _Message(content_str)
-
-
-class _Message:
-    def __init__(self, content: str):
-        self.content = content
 
 
 # ── Singletons ─────────────────────────────────────────────────────────────────
 ai_provider = GeminiProvider()
 ollama_provider = OllamaProvider()
+mock_provider = MockProvider()
 
+
+# ── Central dispatcher ─────────────────────────────────────────────────────────
 
 async def openai_safe_call(client_method: Callable, **kwargs) -> Dict[str, Any]:
     """
-    Hybrid AI Provider: Prioritizes local Ollama, falls back to Gemini if Ollama is down.
+    Central AI dispatcher. Extracts system/user prompts from messages and
+    routes to MockProvider (safe, deterministic, no API keys needed).
+
+    To switch to Gemini: replace `mock_provider` with `ai_provider`.
+    To switch to Ollama: replace `mock_provider` with `ollama_provider`.
     """
     messages = kwargs.get("messages", [])
     system_prompt = ""
@@ -240,39 +337,21 @@ async def openai_safe_call(client_method: Callable, **kwargs) -> Dict[str, Any]:
         if role == "system":
             system_prompt = content
         elif role == "user":
-            user_prompt = content
+            user_prompt += content  # accumulate in case of multi-turn
 
     temperature = kwargs.get("temperature", 0.7)
-    
-    # 1. Attempt Local AI (Ollama)
-    result = await ollama_provider.generate_json(
+
+    result = await mock_provider.generate_json(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=temperature,
     )
 
-    # 2. Check for connection-related errors to trigger fallback
-    if result["error"]:
-        err_msg = result["error"].lower()
-        is_service_down = any(k in err_msg for k in [
-            "not running", "connecterror", "connection attempts failed", 
-            "timeout", "refused", "11434"
-        ])
-
-        if is_service_down:
-            logger.warning(f"[FALLBACK] Local AI (Ollama) unavailable: {result['error']}. Routing to Cloud AI (Gemini)...")
-            # 3. Fallback to Gemini
-            return await ai_provider.generate_json(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=temperature,
-            )
+    if result.get("data"):
+        try:
+            content = result["data"].choices[0].message.content
+            logger.debug(f"AI response: {content[:150]}…")
+        except Exception:
+            pass
 
     return result
-
-
-class _OllamaResponseWrapper:
-    """Mimics OpenAI response .choices[0].message.content for drop-in compat."""
-    def __init__(self, parsed_json: dict):
-        import json
-        self.choices = [_Choice(json.dumps(parsed_json))]

@@ -147,19 +147,35 @@ function ReportContent() {
           </div>
         </div>
 
-        {/* Improvement Plan */}
-        <div className="card">
-          <h2 className="text-white font-semibold mb-4">📈 Recommended Action Plan</h2>
-          <div className="space-y-3">
-            {(report.improvement_plan || []).map((item, i) => (
-              <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-white/5 border border-white/10 text-sm text-white/70">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary-500/20 text-primary-300 text-xs font-bold flex items-center justify-center">
-                  {i + 1}
-                </span>
-                {item}
-              </div>
-            ))}
+        {/* Improvement & Upskilling Plan */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="card">
+            <h2 className="text-white font-semibold mb-4">📈 Recommended Action Plan</h2>
+            <div className="space-y-3">
+              {(report.improvement_plan || []).map((item, i) => (
+                <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-white/5 border border-white/10 text-sm text-white/70">
+                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary-500/20 text-primary-300 text-xs font-bold flex items-center justify-center">
+                    {i + 1}
+                  </span>
+                  {item}
+                </div>
+              ))}
+            </div>
           </div>
+          
+          {(report.upskilling_plan && report.upskilling_plan.length > 0) && (
+            <div className="card border-purple-500/20">
+              <h2 className="text-white font-semibold mb-4">📚 Upskilling Resources</h2>
+              <div className="space-y-3">
+                {report.upskilling_plan.map((item, i) => (
+                  <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-sm text-purple-200">
+                    <span className="text-xl">🔗</span>
+                    <span className="mt-0.5">{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Action Buttons */}

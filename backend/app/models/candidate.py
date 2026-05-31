@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, func
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, func
 from app.database import Base
 
 
@@ -12,7 +12,7 @@ class Candidate(Base):
     position = Column(String(255), nullable=True)
     resume_path = Column(String(500), nullable=False)
     resume_text = Column(Text, nullable=True)
-    resume_summary = Column(Text, nullable=True)  # Condenced version for optimized prompts
+    resume_summary = Column(Text, nullable=True)  # Condensed version for optimized prompts
     total_score = Column(Float, nullable=True)
     report_json = Column(Text, nullable=True)  # JSON string of the final report
     status = Column(String(50), default="NOT_STARTED")  # NOT_STARTED | IN_PROGRESS | COMPLETED | FAILED
@@ -22,3 +22,8 @@ class Candidate(Base):
     last_ai_error = Column(Text, nullable=True)  # For diagnostic tracking
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # ── Feature additions ───────────────────────────────────────────────────────
+    is_verified = Column(Boolean, default=False, nullable=False)  # OTP verified
+    tab_switch_count = Column(Integer, default=0, nullable=False)  # Anti-cheat: tab switches
+    copy_paste_count = Column(Integer, default=0, nullable=False)  # Anti-cheat: paste attempts

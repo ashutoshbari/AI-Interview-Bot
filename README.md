@@ -1,109 +1,176 @@
-# 🚀 AI Interview Bot (v2.0) - Local & Hybrid AI
+# AI Interview Bot
 
-A production-grade AI-powered interview platform that generates personalized technical interviews from candidate resumes, evaluates responses in real-time, and provides automated feedback via email.
-
----
-
-## 🌟 Key Features
-
-- **🧠 Local AI Inference**: Integrated with **Ollama (llama3)** to run the entire backend for free on your local machine.
-- **🛡️ Hybrid Fallback**: Automatically switches to **Google Gemini** if your local AI service is offline, ensuring 100% uptime.
-- **📧 Automated Email System**: Syncs candidate progress with beautifully formatted HTML emails for registration, interview completion (score & feedback), and reminders.
-- **📈 Real-time Status Tracking**: Monitor interview lifecycles with statuses: `NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, and `FAILED`.
-- **✍️ Voice & Text**: Supports real-time transcription for a natural chat+voice interview experience.
-- **📊 Precise Reporting**: Generates detailed PDF reports with technical, clarity, and communication scores.
+> 🤖 A production-ready AI-powered interview platform with resume parsing, OTP verification, real-time question generation, anti-cheat monitoring, and detailed performance reports.
 
 ---
 
-## 🏗️ Technical Architecture
+## 🚀 Live Demo
 
-### **Backend: FastAPI (Python)**
-- **Async Processing**: Fast performance with background task handling for emails and AI evaluations.
-- **Database**: SQLite (default) for zero-config portable storage.
-- **Inference Engines**: Ollama (Primary) / Google Gemini (Fallback).
-- **Communication**: SMTP/Gmail/SendGrid for automated notifications.
-
-### **Frontend: Next.js (React)**
-- **Tailwind CSS**: Modern, premium dark-mode aesthetics.
-- **Framer Motion**: Smooth micro-animations and transitions.
-- **Real-time UI**: Dynamic loading states and status tracking.
+- **Frontend:** [Deployed on Vercel]
+- **Backend:** [Deployed on Render]
 
 ---
 
-## 🛠️ Setup Instructions
+## 📦 Tech Stack
 
-### 1. Requirements
-- Python 3.10+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 14, TypeScript, Tailwind/Vanilla CSS |
+| Backend | FastAPI, Python 3.11 |
+| Database | SQLite (aiosqlite) |
+| AI | Google Gemini 2.5 Flash |
+| Email | Gmail SMTP |
+| Auth | OTP Verification (Email) |
+
+---
+
+## ✨ Features
+
+- 📄 Resume upload & AI parsing (PDF/DOCX)
+- 🔐 Multi-factor OTP verification (Email)
+- 🤖 Dynamic AI question generation (role-specific)
+- 🎯 Stage-based interview flow (Greeting → Experience → Scenario → Project → Technical → Behavioral)
+- 🕐 Time-aware greeting (Good Morning / Afternoon / Evening)
+- 🎙️ Voice Mode (Record & transcribe answers)
+- 📊 Live scoring per answer (Technical, Clarity, Depth, Communication)
+- ⏩ Auto-advance to next question
+- 🚨 Anti-cheat monitoring (tab-switch + copy-paste detection)
+- 📈 Final report with Upskilling Resources
+- 📧 Beautiful HTML email notifications
+
+---
+
+## 🔧 Local Development
+
+### Prerequisites
+- Python 3.11+
 - Node.js 18+
-- [Ollama](https://ollama.com) (Optional but recommended for free local AI)
+- npm
 
-### 2. Configure Local AI (Ollama)
-Install Ollama and pull the Llama3 model:
-```bash
-ollama run llama3
-```
-
-### 3. Backend Setup
+### Backend
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate
+venv\Scripts\activate      # Windows
+# source venv/bin/activate  # Mac/Linux
+
 pip install -r requirements.txt
+cp .env.example .env       # Fill in your keys
+uvicorn app.main:app --reload
+# Runs on http://localhost:8000
 ```
 
-Create a `.env` file in `/backend`:
-```env
-# AI Providers
-GEMINI_API_KEY=your_key_here
-OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=llama3
-
-# Email (SMTP)
-MAIL_USERNAME=your_email@gmail.com
-MAIL_PASSWORD=your_app_password
-MAIL_FROM=your_email@gmail.com
-MAIL_SERVER=smtp.gmail.com
-MAIL_PORT=587
-```
-
-### 4. Frontend Setup
+### Frontend
 ```bash
 cd frontend
 npm install
+# Create .env.local with:
+# NEXT_PUBLIC_API_URL=http://localhost:8000
 npm run dev
+# Runs on http://localhost:3000
 ```
 
 ---
 
-## 📡 API Reference & Tracking
+## 🌍 Deploy to Production (Free)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/candidates/register` | Register & start (Status: `NOT_STARTED`) |
-| `GET`  | `/api/interviews/questions` | Fetch questions (Status -> `IN_PROGRESS`) |
-| `GET`  | `/api/reports/{id}` | Finalize & score (Status -> `COMPLETED`) |
-| `POST` | `/api/admin/mark-failed/{id}` | Mark as stagnant (Status -> `FAILED`) |
+### Step 1 — Push to GitHub
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+git remote add origin https://github.com/YOUR_USERNAME/ai-interview-bot.git
+git push -u origin main
+```
+
+### Step 2 — Deploy Backend on Render (Free)
+1. Go to [https://render.com](https://render.com) → Sign up
+2. Click **New → Web Service**
+3. Connect your GitHub repo → Select the **`backend`** folder as Root Directory
+4. Set:
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - **Runtime:** Python 3.11
+5. Add Environment Variables:
+   ```
+   GEMINI_API_KEY=your_gemini_api_key
+   MAIL_USERNAME=Ashutoshbariofficial@gmail.com
+   MAIL_PASSWORD=enzkuvdcqfosykib
+   MAIL_FROM=Ashutoshbariofficial@gmail.com
+   MAIL_SERVER=smtp.gmail.com
+   MAIL_PORT=587
+   DATABASE_URL=sqlite+aiosqlite:///./ai_interview.db
+   FRONTEND_URL=https://your-app.vercel.app
+   ```
+6. Click **Create Web Service**
+7. Copy your backend URL (e.g. `https://ai-interview-bot.onrender.com`)
+
+### Step 3 — Deploy Frontend on Vercel (Free)
+1. Go to [https://vercel.com](https://vercel.com) → Sign up with GitHub
+2. Click **Add New → Project**
+3. Import your GitHub repo → Set **Root Directory** to `frontend`
+4. Add Environment Variable:
+   ```
+   NEXT_PUBLIC_API_URL=https://ai-interview-bot.onrender.com
+   ```
+5. Click **Deploy**
+6. Your app is live at `https://your-app.vercel.app` 🎉
+
+### Step 4 — Update CORS on Backend
+Go back to Render → Environment Variables → Add:
+```
+FRONTEND_URL=https://your-app.vercel.app
+```
+Then click **Manual Deploy → Deploy Latest Commit**
 
 ---
 
-## 🎯 Automated Email Workflows
+## 🔑 Environment Variables Reference
 
-1. **Registration**: Dynamic "Welcome" email sent upon resume upload.
-2. **Completion**: Professional Results email sent including:
-    - Overall Score (0-10)
-    - Detailed Technical Feedback
-    - Key Improvement Suggestions
-3. **Reminders**: Admin-triggered reminders for incomplete interviews.
+### Backend (.env)
+| Variable | Description | Required |
+|---|---|---|
+| `GEMINI_API_KEY` | Google Gemini API key | ✅ |
+| `MAIL_USERNAME` | Gmail address for sending emails | ✅ |
+| `MAIL_PASSWORD` | Gmail App Password (16-char) | ✅ |
+| `MAIL_FROM` | Sender email (same as username) | ✅ |
+| `FRONTEND_URL` | Vercel frontend URL for CORS | ✅ (prod) |
+| `TWILIO_ACCOUNT_SID` | Twilio SID for SMS OTP | Optional |
+| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Optional |
+| `TWILIO_FROM_NUMBER` | Twilio phone number | Optional |
+
+### Frontend (.env.local)
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_API_URL` | Backend URL (localhost or Render URL) |
 
 ---
 
-## ✅ Deployment Checklist
+## 📁 Project Structure
 
-- [x] Run `ollama run llama3` for free inference.
-- [x] Configure SMTP in `.env` for email automation.
-- [x] Set `GEMINI_API_KEY` for 100% uptime fallback.
-- [x] Check backend logs for real-time status tracking updates.
+```
+AI_bot/
+├── backend/
+│   ├── app/
+│   │   ├── models/          # SQLAlchemy models
+│   │   ├── routers/         # API endpoints
+│   │   ├── services/        # AI, OTP, Email logic
+│   │   ├── schemas/         # Pydantic schemas
+│   │   └── main.py          # FastAPI app entry point
+│   ├── requirements.txt
+│   ├── render.yaml          # Render deployment config
+│   └── .env                 # Local environment variables
+└── frontend/
+    ├── app/
+    │   ├── page.tsx          # Registration
+    │   ├── verify/           # OTP verification
+    │   ├── interview/        # Interview session
+    │   └── report/           # Final report
+    ├── vercel.json           # Vercel deployment config
+    └── .env.local            # Local environment variables
+```
 
 ---
 
-Developed with ❤️ using FastAPI, Next.js, and local Llama3.
+## 📄 License
+MIT © Ashutosh Bari

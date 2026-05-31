@@ -1,43 +1,51 @@
-# Dependencies
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
+
+# ── Database ──────────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Uploads ───────────────────────────────────────────────────────────────────
+backend/uploads/
+backend/dummy_resume*
+backend/test.pdf
+backend/jane_resume*
+
+# ── Node / Next.js ────────────────────────────────────────────────────────────
 node_modules/
-.pnp
-.pnp.js
-
-# Testing
-/coverage
-
-# Next.js
-/.next/
-/out/
-
-# Production
-/build
-
-# Misc
-.DS_Store
-*.pem
-
-# Debug
+.next/
+out/
+.vercel/
+frontend/.env.local
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Local env files
-.env*.local
-.env
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-venv/
-.venv/
-env/
-.env/
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
 
-# Databases
-*.db
-*.sqlite3
-
-# Logs
+# ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
+logs/

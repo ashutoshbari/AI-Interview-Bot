@@ -12,8 +12,10 @@ from app.database import get_db
 from app.models.candidate import Candidate
 from app.models.interview import Interview
 from app.schemas.candidate import CandidateResponse
+from app.schemas.otp import OTPSendResponse, OTPVerifyRequest, OTPVerifyResponse, WarningRequest, WarningResponse
 from app.services.resume_parser import extract_resume_text
 from app.services.email_service import email_manager
+from app.services.otp_service import otp_service
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -161,4 +163,60 @@ async def get_candidate_status(candidate_id: int, db: AsyncSession = Depends(get
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    return {"status": candidate.status, "name": candidate.name}
+    return {"status": candidate.status, "name": candidate.name, "is_verified": getattr(candidate, "is_verified", False)}
+
+
+@router.post("/{candidate_id}/send-otp", response_model=OTPSendResponse)
+async def send_otp(candidate_id: int, db: AsyncSession = Depends(get_db)):
+    """Generate and send OTP via available channels (Email/SMS)."""
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    try:
+        channels = await otp_service.create_and_send_otp(candidate, db)
+        return OTPSendResponse(message="OTP sent successfully", channels=channels)
+    except ValueError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to send OTP for candidate {candidate_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send OTP.")
+
+
+@router.post("/{candidate_id}/verify-otp", response_model=OTPVerifyResponse)
+async def verify_otp(candidate_id: int, payload: OTPVerifyRequest, db: AsyncSession = Depends(get_db)):
+    """Verify the submitted OTP code."""
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    success, message = await otp_service.verify_otp(candidate_id, payload.otp_code, db)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+        
+    return OTPVerifyResponse(verified=True, message=message)
+
+
+@router.post("/{candidate_id}/record-warning", response_model=WarningResponse)
+async def record_warning(candidate_id: int, payload: WarningRequest, db: AsyncSession = Depends(get_db)):
+    """Record an anti-cheat warning (tab switch or copy-paste)."""
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    if payload.type == "tab_switch":
+        candidate.tab_switch_count += 1
+    elif payload.type == "copy_paste":
+        candidate.copy_paste_count += 1
+    else:
+        raise HTTPException(status_code=400, detail="Invalid warning type")
+        
+    await db.commit()
+    
+    return WarningResponse(
+        tab_switch_count=candidate.tab_switch_count,
+        copy_paste_count=candidate.copy_paste_count
+    )

@@ -30,6 +30,7 @@ Return ONLY valid JSON in this exact format:
   "strengths": ["list", "of", "strings"],
   "weaknesses": ["list", "of", "strings"],
   "improvement_plan": ["list", "of", "strings"],
+  "upskilling_plan": ["specific resource 1", "specific resource 2", "specific course or article 3"],
   "recommendation": "Strong Hire / Hire / No Hire"
 }}
 """
@@ -93,6 +94,7 @@ Feedback: {feedback}
             "strengths": ["Completed the interview rounds"],
             "weaknesses": ["Detailed AI analysis temporarily unavailable"],
             "improvement_plan": ["Please review manual scores"],
+            "upskilling_plan": ["N/A"],
             "recommendation": "Hire (Pending Review)"
         }
 
@@ -110,5 +112,6 @@ Feedback: {feedback}
             "strengths": ["N/A"],
             "weaknesses": ["Report parsing failed"],
             "improvement_plan": ["Retry report generation"],
+            "upskilling_plan": ["N/A"],
             "recommendation": "No Hire"
         }

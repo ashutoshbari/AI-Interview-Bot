@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { registerCandidate, getCandidateStatus } from '@/lib/api';
+import { registerCandidate, getCandidateStatus, sendOTP } from '@/lib/api';
 
 const POSITIONS = [
   'Software Engineer',
@@ -103,13 +103,14 @@ export default function RegistrationPage() {
       formData.append('resume', resume!);
       const candidate = await registerCandidate(formData);
 
-      // Redirect immediately after registration success
+      // Request OTP and Redirect to verification screen
       clearInterval(msgInterval);
       clearInterval(progInterval);
       setLoadingProgress(100);
-      setLoadingMessage('Success! Redirecting to interview...');
+      setLoadingMessage('Success! Setting up identity verification...');
+      await sendOTP(candidate.id);
       await new Promise(res => setTimeout(res, 800));
-      router.push(`/interview?candidateId=${candidate.id}&name=${encodeURIComponent(candidate.name)}&total=12`);
+      router.push(`/verify?candidateId=${candidate.id}&name=${encodeURIComponent(candidate.name)}`);
 
     } catch (err: any) {
       clearInterval(msgInterval);

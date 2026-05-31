@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
 export interface TranscriptionResponse {
     text: string;
@@ -18,6 +18,7 @@ export interface CandidateResponse {
     position?: string;
     status: string;
     total_score?: number;
+    is_verified?: boolean;
     created_at: string;
 }
 
@@ -45,6 +46,7 @@ export interface Report {
     strengths: string[];
     weaknesses: string[];
     improvement_plan: string[];
+    upskilling_plan?: string[];
     recommendation: string;
 }
 
@@ -99,6 +101,24 @@ export async function transcribeAudio(audioBlob: Blob): Promise<TranscriptionRes
     const formData = new FormData();
     formData.append('audio', audioBlob, 'answer.webm');
     const response = await api.post<TranscriptionResponse>('/api/interviews/transcribe', formData);
+    return response.data;
+}
+
+// Send OTP
+export async function sendOTP(candidateId: number): Promise<{ message: string; channels: string[] }> {
+    const response = await api.post(`/api/candidates/${candidateId}/send-otp`);
+    return response.data;
+}
+
+// Verify OTP
+export async function verifyOTP(candidateId: number, otpCode: string): Promise<{ verified: boolean; message: string }> {
+    const response = await api.post(`/api/candidates/${candidateId}/verify-otp`, { otp_code: otpCode });
+    return response.data;
+}
+
+// Record Anti-Cheat Warning
+export async function recordWarning(candidateId: number, type: 'tab_switch' | 'copy_paste'): Promise<{ tab_switch_count: number; copy_paste_count: number }> {
+    const response = await api.post(`/api/candidates/${candidateId}/record-warning`, { type });
     return response.data;
 }
 

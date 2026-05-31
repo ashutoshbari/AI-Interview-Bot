@@ -2,8 +2,9 @@ import logging
 import os
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
@@ -19,23 +20,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-import sys
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup / shutdown lifecycle (Triggered Reload)."""
-    logger.info("Starting AI Interview Bot backend with Local AI (Ollama)...")
+    """Startup / shutdown lifecycle."""
+    logger.info("Starting AI Interview Bot backend…")
     await create_tables()
-    
+
     # Ensure upload directory exists
     Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
-    
-    # Phase 17.2: Startup Connectivity Test
+
+    # Non-blocking AI connectivity test
     asyncio.create_task(health_checker.verify_connectivity())
-    
-    logger.info("Database tables and startup checks initialized.")
+
+    logger.info("Database tables created / verified. Server ready.")
     yield
-    logger.info("Shutting down...")
+    logger.info("Shutting down AI Interview Bot backend.")
 
 
 app = FastAPI(
@@ -45,50 +44,59 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-from fastapi import Request
-from fastapi.responses import JSONResponse
+# ── CORS (must be added before routers) ───────────────────────────────────────
+# In production, FRONTEND_URL env var should be set to your Vercel URL
+_raw_origins = os.getenv("FRONTEND_URL", "")
+_extra_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
-# ... existing code ...
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+] + _extra_origins
 
-# CORS configuration
-# Explicit origins are required when allow_credentials=True
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ── Global error handler ───────────────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global unhandled exception: {exc}", exc_info=True)
+    logger.error(f"Unhandled exception on {request.url}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal Server Error. Please check backend logs for details."},
+        content={"detail": "Internal server error. Please check backend logs."},
     )
 
-# Serve uploaded resumes as static files (optional — for debugging)
+# ── Static file serving ────────────────────────────────────────────────────────
 upload_path = Path(settings.UPLOAD_DIR)
 upload_path.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(upload_path)), name="uploads")
 
-# Routers
+# ── Routers ────────────────────────────────────────────────────────────────────
 app.include_router(candidates.router)
 app.include_router(interviews.router)
 app.include_router(reports.router)
 app.include_router(admin.router)
 
 
+# ── Health endpoints ──────────────────────────────────────────────────────────
 @app.get("/health", tags=["health"])
 async def health_check():
     return {"status": "ok", "service": settings.PROJECT_NAME, "version": settings.VERSION}
 
+
+@app.get("/api/health", tags=["health"])
+async def api_health():
+    return {"status": "ok", "service": settings.PROJECT_NAME, "version": settings.VERSION}
+
+
 @app.get("/api/ai-health", tags=["health"])
 async def ai_health_status():
-    """Returns the current connectivity status of OpenAI and the local internet."""
+    """Returns the AI provider connectivity status."""
     return health_checker.get_status()
- 

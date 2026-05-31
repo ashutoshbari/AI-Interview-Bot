@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getQuestions, submitAnswer, transcribeAudio, Question, EvaluationResponse } from '@/lib/api';
+import { getQuestions, submitAnswer, transcribeAudio, recordWarning, Question, EvaluationResponse } from '@/lib/api';
 import LoadingState from '@/components/LoadingState';
 
 const TYPE_LABELS: Record<string, { label: string; color: string }> = {
@@ -39,10 +39,23 @@ function InterviewContent() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [micError, setMicError] = useState('');
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  const [showHearBanner, setShowHearBanner] = useState(false);
+  const [cheatWarning, setCheatWarning] = useState('');
+  const [autoAdvanceCount, setAutoAdvanceCount] = useState<number | null>(null);
+
+  // Time-based greeting
+  const getGreeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good Morning';
+    if (h < 17) return 'Good Afternoon';
+    return 'Good Evening';
+  };
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoAdvanceRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // TTS Function
   const speak = useCallback((text: string, onEnd?: () => void) => {
@@ -55,6 +68,19 @@ function InterviewContent() {
     // before queueing the next utterance. Otherwise it silently fails.
     setTimeout(() => {
       const utterance = new SpeechSynthesisUtterance(text);
+      
+      // Get available voices and try to pick a good one
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        // Prefer Google US English or similar high-quality voices if available
+        const preferredVoice = voices.find(v => v.name.includes('Google') && v.lang.startsWith('en')) 
+                            || voices.find(v => v.lang.startsWith('en')) 
+                            || voices[0];
+        utterance.voice = preferredVoice;
+      }
+
+      utterance.rate = 0.9; // Slightly slower for better clarity
+      utterance.pitch = 1.0;
 
       // Fix Chrome garbage collection bug by keeping a reference
       (window as any).currentUtterance = utterance;
@@ -70,7 +96,7 @@ function InterviewContent() {
       };
 
       window.speechSynthesis.speak(utterance);
-    }, 50);
+    }, 100);
   }, []);
 
   // 1. Start Recording
@@ -128,12 +154,18 @@ function InterviewContent() {
     }
   };
 
-  // Trigger speak on question change (NO AUTO START RECORDING)
+  // Show 'Hear Question' banner when a new question loads
+  // We do NOT auto-speak because browsers block audio without user interaction.
   useEffect(() => {
-    if (isVoiceMode && questions[currentIdx] && !showFeedback && !loading) {
-      speak(questions[currentIdx].question);
+    if (questions[currentIdx] && !showFeedback && !loading) {
+      setShowHearBanner(true);
+      // If the user already clicked something this session, auto-speak is safe
+      if (hasUserInteracted && isVoiceMode) {
+        speak(questions[currentIdx].question);
+        setShowHearBanner(false);
+      }
     }
-  }, [currentIdx, loading, isVoiceMode, questions.length, showFeedback, speak]);
+  }, [currentIdx, loading, questions.length, showFeedback]);
 
   // Extract fetch logic to allow retries
   const fetchQ = useCallback(async (retryCount = 0) => {
@@ -179,6 +211,34 @@ function InterviewContent() {
     }, 1000);
     return () => clearInterval(timerRef.current!);
   }, [currentIdx, showFeedback, isVoiceMode]);
+
+  // Anti-Cheat: Tab Switch Detection
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.hidden && !showFeedback && !evaluation?.interview_complete && !generatingReport) {
+        setCheatWarning('⚠️ Tab switching is not allowed during the interview. This action has been recorded.');
+        try {
+          await recordWarning(candidateId, 'tab_switch');
+        } catch (e) {
+          console.error('Failed to record warning', e);
+        }
+        setTimeout(() => setCheatWarning(''), 6000);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [candidateId, showFeedback, evaluation, generatingReport]);
+
+  const handleCopyPaste = async (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    setCheatWarning('⚠️ Copy/Paste is disabled during the interview. This action has been recorded.');
+    try {
+      await recordWarning(candidateId, 'copy_paste');
+    } catch (err) {
+      console.error('Failed to record warning', err);
+    }
+    setTimeout(() => setCheatWarning(''), 6000);
+  };
 
   const handleAutoSubmit = useCallback(async () => {
     setTimerActive(false);
@@ -238,12 +298,46 @@ function InterviewContent() {
       router.push(`/report?candidateId=${candidateId}&name=${encodeURIComponent(candidateName)}`);
       return;
     }
+    // Clear auto-advance timer if user clicks manually
+    if (autoAdvanceRef.current) clearInterval(autoAdvanceRef.current);
+    setAutoAdvanceCount(null);
     setShowFeedback(false);
     setEvaluation(null);
     setAnswer('');
     setAudioBlob(null);
     setCurrentIdx(prev => prev + 1);
     setTimerActive(true);
+  };
+
+  // Auto-advance countdown after feedback is shown
+  useEffect(() => {
+    if (!showFeedback || !evaluation || evaluation.interview_complete) return;
+    setAutoAdvanceCount(4);
+    autoAdvanceRef.current = setInterval(() => {
+      setAutoAdvanceCount(prev => {
+        if (prev === null || prev <= 1) {
+          clearInterval(autoAdvanceRef.current!);
+          // Auto proceed
+          setShowFeedback(false);
+          setEvaluation(null);
+          setAnswer('');
+          setAudioBlob(null);
+          setCurrentIdx(c => c + 1);
+          setTimerActive(true);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(autoAdvanceRef.current!);
+  }, [showFeedback]);
+
+  // End test early — go straight to report
+  const handleEndTest = async () => {
+    if (autoAdvanceRef.current) clearInterval(autoAdvanceRef.current);
+    setGeneratingReport(true);
+    await new Promise(res => setTimeout(res, 1500));
+    router.push(`/report?candidateId=${candidateId}&name=${encodeURIComponent(candidateName)}`);
   };
 
   const timerPercent = (timeLeft / TIMER_SECONDS) * 100;
@@ -310,11 +404,23 @@ function InterviewContent() {
 
   return (
     <div className="min-h-screen flex flex-col px-4 py-8">
+      {/* Floating End Test Button */}
+      <button
+        onClick={handleEndTest}
+        className="fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold transition-all hover:scale-105 shadow-lg backdrop-blur-md"
+        title="End interview and go to report"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+        End Test
+      </button>
+
       {/* Header */}
       <div className="max-w-3xl w-full mx-auto mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-white">AI Interview</h1>
-          <p className="text-white/40 text-sm">Welcome, {candidateName}</p>
+          <p className="text-white/40 text-sm">{getGreeting()}, {candidateName} 👋</p>
         </div>
         <div className="flex items-center gap-4">
           {/* Voice Toggle */}
@@ -360,6 +466,18 @@ function InterviewContent() {
       </div>
 
       <div className="max-w-3xl w-full mx-auto flex-1 flex flex-col gap-4">
+        {/* Anti-Cheat Warning */}
+        {cheatWarning && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 flex items-center justify-between gap-3 animate-shake">
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <p className="text-red-300 text-sm font-semibold">{cheatWarning}</p>
+            </div>
+          </div>
+        )}
+
         {/* Error Banner */}
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 flex items-center justify-between gap-3 animate-shake">
@@ -378,6 +496,30 @@ function InterviewContent() {
                 Retry Action
               </button>
             )}
+          </div>
+        )}
+
+        {/* Hear Question Banner — shown until user clicks */}
+        {showHearBanner && !showFeedback && (
+          <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl px-4 py-3 flex items-center justify-between gap-3 animate-fade-in">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center shrink-0">
+                <svg className="w-4 h-4 text-purple-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12m0 0a9 9 0 110-12" />
+                </svg>
+              </div>
+              <p className="text-purple-200 text-sm">Click to hear the AI interviewer read your question aloud</p>
+            </div>
+            <button
+              onClick={() => {
+                setHasUserInteracted(true);
+                setShowHearBanner(false);
+                speak(currentQ.question);
+              }}
+              className="shrink-0 px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white text-sm font-bold rounded-lg transition-all shadow-lg shadow-purple-500/30"
+            >
+              🔊 Hear Question
+            </button>
           </div>
         )}
 
@@ -400,6 +542,19 @@ function InterviewContent() {
                 </div>
               )}
 
+              {!showFeedback && (
+                <button
+                  onClick={() => { setHasUserInteracted(true); setShowHearBanner(false); speak(currentQ.question); }}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 transition-all text-xs font-medium border border-white/5"
+                  title="Repeat Question"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                  </svg>
+                  🔊 Repeat
+                </button>
+              )}
+
               {!showFeedback && !isVoiceMode && (
                 <div className={`flex items-center gap-1.5 font-mono text-lg font-bold ${timerColor}`}>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -410,7 +565,7 @@ function InterviewContent() {
               )}
             </div>
           </div>
-          <p className="text-white text-xl md:text-2xl font-medium leading-relaxed">{currentQ.question}</p>
+          <p className="text-white text-xl md:text-2xl font-medium leading-relaxed select-none" onCopy={handleCopyPaste}>{currentQ.question}</p>
         </div>
 
         {/* Main Interaction Area */}
@@ -505,6 +660,8 @@ function InterviewContent() {
                 <textarea
                   value={answer}
                   onChange={e => setAnswer(e.target.value)}
+                  onPaste={handleCopyPaste}
+                  onCopy={handleCopyPaste}
                   placeholder="Type your detailed answer here..."
                   rows={8}
                   className="input-field resize-none text-base leading-relaxed p-6"
@@ -550,11 +707,23 @@ function InterviewContent() {
               <p className="text-primary-200 text-sm italic">{evaluation?.feedback}</p>
             </div>
 
-            <button onClick={handleNext} className="btn-primary w-full py-4 font-bold text-lg shadow-xl shadow-primary-500/20">
-              {evaluation?.interview_complete
-                ? '📊 Final Results'
-                : 'Next Step →'}
-            </button>
+            {evaluation?.interview_complete ? (
+              <button onClick={handleNext} className="btn-primary w-full py-4 font-bold text-lg shadow-xl shadow-primary-500/20">
+                📊 Final Results
+              </button>
+            ) : (
+              <div className="flex items-center gap-3">
+                <button onClick={handleNext} className="btn-primary flex-1 py-4 font-bold text-lg shadow-xl shadow-primary-500/20">
+                  Next Step →
+                </button>
+                {autoAdvanceCount !== null && (
+                  <div className="flex flex-col items-center justify-center w-14 h-14 rounded-2xl bg-white/5 border border-white/10 shrink-0">
+                    <span className="text-2xl font-black text-primary-300">{autoAdvanceCount}</span>
+                    <span className="text-[9px] text-white/30 uppercase tracking-wider">auto</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

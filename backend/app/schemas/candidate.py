@@ -21,6 +21,9 @@ class CandidateResponse(BaseModel):
     current_stage: Optional[str] = None
     last_ai_error: Optional[str] = None
     total_score: Optional[float]
+    is_verified: bool = False
+    tab_switch_count: int = 0
+    copy_paste_count: int = 0
     interview_start_time: Optional[datetime] = None
     interview_end_time: Optional[datetime] = None
     created_at: datetime
@@ -40,6 +43,9 @@ class CandidateListResponse(BaseModel):
     current_stage: Optional[str] = None
     last_ai_error: Optional[str] = None
     total_score: Optional[float]
+    is_verified: bool = False
+    tab_switch_count: int = 0
+    copy_paste_count: int = 0
     interview_start_time: Optional[datetime] = None
     interview_end_time: Optional[datetime] = None
     created_at: datetime

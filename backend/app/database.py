@@ -42,4 +42,5 @@ async def create_tables():
     """Create all tables on startup."""
     async with engine.begin() as conn:
         from app.models import candidate, interview  # noqa: F401
+        from app.models import otp_verification      # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
