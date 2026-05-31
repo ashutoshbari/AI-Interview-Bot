@@ -2,6 +2,10 @@
 
 > 🤖 A production-ready AI-powered interview platform with resume parsing, OTP verification, real-time question generation, anti-cheat monitoring, and detailed performance reports.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render.svg)](https://render.com/deploy?repo=https://github.com/ashutoshbari/AI-Interview-Bot)
+&nbsp;&nbsp;
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fashutoshbari%2FAI-Interview-Bot&root-directory=frontend&env=NEXT_PUBLIC_API_URL)
+
 ---
 
 ## 🚀 Live Demo
