@@ -107,7 +107,7 @@ class MockProvider:
         # question_gen.py user:   the DYNAMIC_QUESTION_PROMPT (contains STAGE, CANDIDATE, etc.)
         elif "interviewer" in combined or "stage rules" in combined or "interview history" in combined:
             # Detect stage from the prompt
-            if "greeting" in combined or "no history yet" in combined:
+            if "current stage: greeting" in combined or "no history yet" in combined:
                 question = (
                     "Welcome! I've reviewed your profile and I'm excited to speak with you today. "
                     "Could you start by giving me a brief introduction of yourself — your background, "
@@ -115,7 +115,7 @@ class MockProvider:
                 )
                 q_type = "introduction"
                 stage = "greeting"
-            elif "experience" in combined:
+            elif "current stage: experience" in combined:
                 question = (
                     "Based on your profile, you have solid hands-on experience. "
                     "Can you walk me through your most recent role — what your day-to-day responsibilities "
@@ -123,7 +123,14 @@ class MockProvider:
                 )
                 q_type = "experience"
                 stage = "experience"
-            elif "project" in combined:
+            elif "current stage: scenario" in combined:
+                question = (
+                    "Imagine you've just been assigned an urgent task that requires a technology you've never used before, "
+                    "and the deadline is tomorrow. Walk me through exactly how you would approach this situation."
+                )
+                q_type = "scenario"
+                stage = "scenario"
+            elif "current stage: project" in combined:
                 question = (
                     "I'd like to do a deep dive into one of your projects. "
                     "Can you pick the most technically challenging one and walk me through "
@@ -131,7 +138,7 @@ class MockProvider:
                 )
                 q_type = "project"
                 stage = "project"
-            elif "behavioral" in combined:
+            elif "current stage: behavioral" in combined:
                 question = (
                     "Tell me about a time when you had to deal with a significant technical obstacle "
                     "under a tight deadline. How did you handle it, and what was the outcome?"
@@ -322,11 +329,8 @@ mock_provider = MockProvider()
 
 async def openai_safe_call(client_method: Callable, **kwargs) -> Dict[str, Any]:
     """
-    Central AI dispatcher. Extracts system/user prompts from messages and
-    routes to MockProvider (safe, deterministic, no API keys needed).
-
-    To switch to Gemini: replace `mock_provider` with `ai_provider`.
-    To switch to Ollama: replace `mock_provider` with `ollama_provider`.
+    Central AI dispatcher. Routes to Gemini (ai_provider) if GEMINI_API_KEY is set,
+    otherwise falls back to MockProvider.
     """
     messages = kwargs.get("messages", [])
     system_prompt = ""
@@ -337,11 +341,17 @@ async def openai_safe_call(client_method: Callable, **kwargs) -> Dict[str, Any]:
         if role == "system":
             system_prompt = content
         elif role == "user":
-            user_prompt += content  # accumulate in case of multi-turn
+            user_prompt += content
 
     temperature = kwargs.get("temperature", 0.7)
 
-    result = await mock_provider.generate_json(
+    # Use Gemini if a valid key is provided
+    if settings.GEMINI_API_KEY and not settings.GEMINI_API_KEY.startswith("your_") and settings.GEMINI_API_KEY != "YOUR_GEMINI_API_KEY_HERE":
+        provider = ai_provider
+    else:
+        provider = mock_provider
+
+    result = await provider.generate_json(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=temperature,
