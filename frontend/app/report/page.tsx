@@ -29,7 +29,7 @@ const REC_CONFIG: Record<string, { color: string; bg: string; border: string; ic
 };
 
 function LargeScoreGauge({ score, label = 'Composite' }: { score: number; label?: string }) {
-  const clamp = Math.max(0, Math.min(100, score || 74));
+  const clamp = Math.max(0, Math.min(100, Math.round(score ?? 75)));
   const dashArray = 280;
   const dashOffset = dashArray - (dashArray * clamp) / 100;
 
@@ -63,7 +63,7 @@ function LargeScoreGauge({ score, label = 'Composite' }: { score: number; label?
 }
 
 function SmallScoreGauge({ score, label, max = 100 }: { score: number; label: string; max?: number }) {
-  const clamp = Math.max(0, Math.min(100, score || 74));
+  const clamp = Math.max(0, Math.min(100, Math.round(score ?? 75)));
   const dashArray = 180;
   const dashOffset = dashArray - (dashArray * clamp) / 100;
 
@@ -174,9 +174,11 @@ function ReportContent() {
 
   const recKey = report?.recommendation || 'Hire';
   const recInfo = REC_CONFIG[recKey] || REC_CONFIG['Hire'];
-  const overallScore = report?.overall_score || Math.round(
-    ((report?.technical_score || 74) + (report?.problem_solving_score || 74) + (report?.communication_score || 74)) / 3
-  );
+  
+  const techScore = Math.round(report?.technical_score ?? 75);
+  const probScore = Math.round(report?.problem_solving_score ?? 75);
+  const commScore = Math.round(report?.communication_score ?? 80);
+  const overallScore = Math.round(report?.overall_score ?? ((techScore + probScore + commScore) / 3));
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fade-in">
@@ -262,9 +264,9 @@ function ReportContent() {
 
       {/* 3 Metric Score Gauge Cards Row Matching Lovable UI Screenshot 2 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <SmallScoreGauge score={report?.technical_score || 74} label="Technical Depth" />
-        <SmallScoreGauge score={report?.problem_solving_score || 74} label="Problem Solving" />
-        <SmallScoreGauge score={report?.communication_score || 74} label="Communication" />
+        <SmallScoreGauge score={techScore} label="Technical Depth" />
+        <SmallScoreGauge score={probScore} label="Problem Solving" />
+        <SmallScoreGauge score={commScore} label="Communication" />
       </div>
 
       {/* Strengths & Upskilling Grid */}
