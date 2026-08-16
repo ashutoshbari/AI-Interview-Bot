@@ -156,12 +156,29 @@ function VerifyContent() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden">
-      {/* Background Decorative Glow Orbs */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+    <div className="w-full max-w-4xl mx-auto px-4 py-8 space-y-8 relative z-10 animate-fade-in">
+      
+      {/* 4-Step Indicator Bar */}
+      <div className="glass-panel rounded-full p-2 max-w-4xl mx-auto flex items-center justify-between gap-2 border border-white/10">
+        <div className="flex-1 px-4 py-2 rounded-full text-center text-xs font-semibold text-white/40 flex items-center justify-center gap-2">
+          <span className="font-mono">01</span>
+          <span>Upload Resume</span>
+        </div>
+        <div className="flex-1 px-4 py-2 rounded-full text-center text-xs font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-500/30 flex items-center justify-center gap-2">
+          <span className="font-mono">02</span>
+          <span>Verify OTP</span>
+        </div>
+        <div className="flex-1 px-4 py-2 rounded-full text-center text-xs font-semibold text-white/40 flex items-center justify-center gap-2">
+          <span className="font-mono">03</span>
+          <span>Voice Interview</span>
+        </div>
+        <div className="flex-1 px-4 py-2 rounded-full text-center text-xs font-semibold text-white/40 flex items-center justify-center gap-2">
+          <span className="font-mono">04</span>
+          <span>Scorecard</span>
+        </div>
+      </div>
 
-      <div className="w-full max-w-lg relative z-10 animate-fade-in">
+      <div className="max-w-lg mx-auto">
         
         {/* Header Badge */}
         <div className="text-center mb-8">
