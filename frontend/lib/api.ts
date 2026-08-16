@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://ai-interview-bot-api.loca.lt';
 
 export interface TranscriptionResponse {
     text: string;
@@ -9,6 +9,10 @@ export interface TranscriptionResponse {
 const api = axios.create({
     baseURL: API_BASE,
     timeout: 90000,
+    headers: {
+        'bypass-tunnel-reminder': 'true',
+        'Bypass-Tunnel-Reminder': 'true',
+    },
 });
 
 export interface CandidateResponse {
@@ -142,7 +146,7 @@ export async function playTTS(text: string): Promise<void> {
     try {
         const response = await fetch(`${API_BASE}/api/interviews/tts`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'bypass-tunnel-reminder': 'true' },
             body: JSON.stringify({ text: text.slice(0, 1000) }),
         });
         if (!response.ok) throw new Error('TTS failed');
