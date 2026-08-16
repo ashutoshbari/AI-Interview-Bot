@@ -24,3 +24,13 @@ services:
         value: sqlite+aiosqlite:///./ai_interview.db
       - key: UPLOAD_DIR
         value: uploads
+
+  - type: web
+    name: ai-interview-bot-frontend
+    runtime: node
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: ""
