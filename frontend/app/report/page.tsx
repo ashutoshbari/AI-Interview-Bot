@@ -56,6 +56,19 @@ function ScoreArc({ score, label, color = '#6366f1' }: { score: number; label: s
   );
 }
 
+function formatItem(item: any): string {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  if (typeof item === 'object') {
+    if (item.title && item.detail) return `${item.title}: ${item.detail}`;
+    if (item.topic && item.resource) return `${item.topic}: ${item.resource}`;
+    if (item.title) return item.title;
+    if (item.topic) return item.topic;
+    if (item.detail) return item.detail;
+  }
+  return String(item);
+}
+
 function ReportContent() {
   const router = useRouter();
   const params = useSearchParams();
@@ -177,7 +190,7 @@ function ReportContent() {
                 report.strengths.map((str, i) => (
                   <div key={i} className="flex items-start gap-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
                     <span className="text-emerald-400 font-bold text-sm">✓</span>
-                    <p className="text-emerald-100 text-xs leading-relaxed">{str}</p>
+                    <p className="text-emerald-100 text-xs leading-relaxed">{formatItem(str)}</p>
                   </div>
                 ))
               ) : (
@@ -197,7 +210,7 @@ function ReportContent() {
                 report.weaknesses.map((wk, i) => (
                   <div key={i} className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
                     <span className="text-amber-400 font-bold text-sm">➔</span>
-                    <p className="text-amber-100 text-xs leading-relaxed">{wk}</p>
+                    <p className="text-amber-100 text-xs leading-relaxed">{formatItem(wk)}</p>
                   </div>
                 ))
               ) : (
@@ -220,7 +233,7 @@ function ReportContent() {
                   <span className="font-mono text-xs font-black text-primary-400 bg-primary-500/10 px-2 py-1 rounded-lg">
                     0{idx + 1}
                   </span>
-                  <p className="text-white/80 text-xs leading-relaxed">{step}</p>
+                  <p className="text-white/80 text-xs leading-relaxed">{formatItem(step)}</p>
                 </div>
               ))}
             </div>
