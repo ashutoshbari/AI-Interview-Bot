@@ -105,19 +105,7 @@ async def get_questions(
             logger.error(f"Failed to update candidate status: {exc}")
             await db.rollback()
 
-        # Emails: candidate + interviewer
-        if candidate.email:
-            background_tasks.add_task(
-                email_manager.send_interview_started,
-                email=candidate.email,
-                name=candidate.name,
-                position=candidate.position or "Software Engineer",
-            )
-        background_tasks.add_task(
-            _send_interviewer_alert_bg,
-            "STARTED",
-            candidate,
-        )
+        # Status updated to IN_PROGRESS
         logger.info(f"Interview STARTED for candidate {candidate_id} ({candidate.name})")
 
     # 4. Load existing questions
@@ -386,36 +374,9 @@ async def submit_answer(
         await db.rollback()
         raise HTTPException(status_code=500, detail="Database error saving your answer.")
 
-    # 11. Post-completion emails
+    # 11. Mark completed
     if is_complete and old_status != "COMPLETED":
         logger.info(f"Interview COMPLETED for candidate {candidate_id} ({candidate.name})")
-
-        avg_score = None
-        try:
-            all_scores = [
-                h.technical_score for h in history
-                if h.technical_score is not None
-            ]
-            if all_scores:
-                avg_score = round((sum(all_scores) / len(all_scores)) * 10, 1)
-        except Exception:
-            pass
-
-        if candidate.email:
-            background_tasks.add_task(
-                email_manager.send_interview_completed,
-                email=candidate.email,
-                name=candidate.name,
-                position=candidate.position or "Software Engineer",
-                overall_score=avg_score,
-            )
-
-        background_tasks.add_task(
-            _send_interviewer_alert_bg,
-            "COMPLETED",
-            candidate,
-            {"overall_score": avg_score, "recommendation": "Pending Review", "q_count": len(history)},
-        )
 
     return EvaluationResponse(
         technical_score=evaluation.get("technical_score", 5.0),
@@ -587,23 +548,6 @@ async def finish_interview(
         candidate.total_score = avg_score
 
     await db.commit()
-
-    if candidate.email:
-        background_tasks.add_task(
-            email_manager.send_interview_completed,
-            email=candidate.email,
-            name=candidate.name,
-            position=candidate.position or "Software Engineer",
-            overall_score=avg_score,
-            recommendation="Completed"
-        )
-
-    background_tasks.add_task(
-        _send_interviewer_alert_bg,
-        "COMPLETED",
-        candidate,
-        {"overall_score": avg_score, "q_count": len(answered)},
-    )
 
     return {
         "status": "success",
@@ -777,3 +721,61 @@ async def get_interview_records(candidate_id: int, db: AsyncSession = Depends(ge
         .order_by(Interview.question_order)
     )
     return result.scalars().all()
+
+
+# ── Secure Token Endpoints for Public Interviews ──────────────────────────────
+
+@router.get("/token/{token}/questions", response_model=list[QuestionResponse])
+async def get_questions_by_token(
+    token: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Retrieve or generate active question by secure token."""
+    cand_result = await db.execute(select(Candidate).where(Candidate.secure_token == token))
+    candidate = cand_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Interview link not found")
+    return await get_questions(candidate.id, background_tasks, db)
+
+
+@router.post("/token/{token}/answer", response_model=EvaluationResponse)
+async def submit_answer_by_token(
+    token: str,
+    payload: AnswerSubmit,
+    db: AsyncSession = Depends(get_db)
+):
+    """Submit candidate response and evaluate by secure token."""
+    cand_result = await db.execute(select(Candidate).where(Candidate.secure_token == token))
+    candidate = cand_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Interview link not found")
+    return await submit_answer(candidate.id, payload, db)
+
+
+@router.post("/token/{token}/clarify")
+async def clarify_question_by_token(
+    token: str,
+    payload: ClarifyRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Clarify question by secure token."""
+    cand_result = await db.execute(select(Candidate).where(Candidate.secure_token == token))
+    candidate = cand_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Interview link not found")
+    return await clarify_question(candidate.id, payload, db)
+
+
+@router.post("/token/{token}/finish")
+async def finish_interview_by_token(
+    token: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Conclude interview by secure token."""
+    cand_result = await db.execute(select(Candidate).where(Candidate.secure_token == token))
+    candidate = cand_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Interview link not found")
+    return await finish_interview(candidate.id, background_tasks, db)

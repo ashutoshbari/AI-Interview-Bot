@@ -17,6 +17,8 @@ class CandidateResponse(BaseModel):
     email: Optional[str]
     position: Optional[str]
     status: str
+    secure_token: Optional[str] = None
+    interview_url: Optional[str] = None
     resume_summary: Optional[str] = None
     current_stage: Optional[str] = None
     last_ai_error: Optional[str] = None
@@ -39,6 +41,8 @@ class CandidateListResponse(BaseModel):
     email: Optional[str]
     position: Optional[str]
     status: str
+    secure_token: Optional[str] = None
+    interview_url: Optional[str] = None
     resume_summary: Optional[str] = None
     current_stage: Optional[str] = None
     last_ai_error: Optional[str] = None

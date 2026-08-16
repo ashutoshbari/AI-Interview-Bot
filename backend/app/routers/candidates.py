@@ -117,7 +117,12 @@ async def register_candidate(
             file_path.unlink(missing_ok=True)
             raise HTTPException(status_code=500, detail="Failed to process resume content.")
 
-        # 6. Save candidate to DB immediately — no AI call yet (PERFORMANCE FIX)
+        # 6. Save candidate to DB immediately with cryptographic secure token
+        import secrets as _secrets
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        secure_token = _secrets.token_urlsafe(32)
+        token_expires_at = _dt.now(_tz.utc) + _td(days=7)
+
         try:
             candidate = Candidate(
                 name=name,
@@ -128,11 +133,13 @@ async def register_candidate(
                 resume_text=resume_text,
                 resume_summary=None,   # Will be filled by background task
                 status="NOT_STARTED",
+                secure_token=secure_token,
+                token_expires_at=token_expires_at,
             )
             db.add(candidate)
             await db.commit()
             await db.refresh(candidate)
-            logger.info(f"✅ DB Record Created: ID={candidate.id} Name={candidate.name}")
+            logger.info(f"✅ DB Record Created: ID={candidate.id} Token={secure_token[:8]}... Name={candidate.name}")
         except Exception as e:
             logger.error(f"DB error during registration: {e}", exc_info=True)
             file_path.unlink(missing_ok=True)
@@ -235,3 +242,64 @@ async def record_warning(candidate_id: int, payload: WarningRequest, db: AsyncSe
         tab_switch_count=candidate.tab_switch_count,
         copy_paste_count=candidate.copy_paste_count
     )
+
+
+# ── Secure Token Endpoints for Public Deep Links ──────────────────────────────
+
+@router.get("/token/{token}")
+async def get_candidate_by_token(token: str, db: AsyncSession = Depends(get_db)):
+    """Resolve a secure public interview token, validating state and expiration."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    result = await db.execute(select(Candidate).where(Candidate.secure_token == token))
+    candidate = result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(
+            status_code=404,
+            detail="This interview link is no longer valid or does not exist."
+        )
+
+    # Check expiration
+    if candidate.token_expires_at:
+        now = _dt.now(_tz.utc)
+        exp = candidate.token_expires_at if candidate.token_expires_at.tzinfo else candidate.token_expires_at.replace(tzinfo=_tz.utc)
+        if now > exp:
+            raise HTTPException(
+                status_code=410,
+                detail="This interview link has expired. Please contact your hiring manager for a new link."
+            )
+
+    return {
+        "valid": True,
+        "candidate_id": candidate.id,
+        "secure_token": candidate.secure_token,
+        "name": candidate.name,
+        "email": candidate.email,
+        "mobile": candidate.mobile,
+        "position": candidate.position,
+        "status": candidate.status,
+        "is_verified": candidate.is_verified,
+        "current_stage": candidate.current_stage or "greeting",
+        "is_completed": candidate.status == "COMPLETED",
+        "created_at": candidate.created_at,
+    }
+
+
+@router.post("/token/{token}/verify-otp")
+async def verify_otp_by_token(
+    token: str,
+    payload: OTPVerifyRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Verify OTP directly via the candidate's secure token."""
+    result = await db.execute(select(Candidate).where(Candidate.secure_token == token))
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Interview link not found")
+
+    success, message = await otp_service.verify_otp(candidate.id, payload.otp_code, db)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    return {"verified": True, "message": message, "candidate_id": candidate.id}

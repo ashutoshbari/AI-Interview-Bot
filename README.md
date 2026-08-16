@@ -1,180 +1,153 @@
-# AI Interview Bot
+# ASHVANCE TECH — Smart Interview AI
 
-> 🤖 A production-ready AI-powered interview platform with resume parsing, OTP verification, real-time question generation, anti-cheat monitoring, and detailed performance reports.
+> 🚀 **Intelligent Hiring. Smarter Interviews.**  
+> Official Enterprise AI Candidate Assessment, Adaptive Voice Interviewing & Real-time Scorecard Platform by **ASHVANCE TECH**.
 
-[![Deploy to Render](https://render.com/images/deploy-to-render.svg)](https://render.com/deploy?repo=https://github.com/ashutoshbari/AI-Interview-Bot)
-&nbsp;&nbsp;
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fashutoshbari%2FAI-Interview-Bot&root-directory=frontend&env=NEXT_PUBLIC_API_URL)
-
----
-
-## 🚀 Live Demo
-
-- **Frontend:** [Deployed on Vercel]
-- **Backend:** [Deployed on Render]
+[![Next.js 14](https://img.shields.io/badge/Next.js-14-black?logo=next.js)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python)](https://python.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178C6?logo=typescript)](https://typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC?logo=tailwindcss)](https://tailwindcss.com/)
+[![Vercel Deployment](https://img.shields.io/badge/Vercel-Deployed-black?logo=vercel)](https://frontend-nine-tau-65.vercel.app/)
 
 ---
 
-## 📦 Tech Stack
+## 🌟 Overview & Brand Identity
 
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js 14, TypeScript, Tailwind/Vanilla CSS |
-| Backend | FastAPI, Python 3.11 |
-| Database | SQLite (aiosqlite) |
-| AI | Google Gemini 2.5 Flash |
-| Email | Gmail SMTP |
-| Auth | OTP Verification (Email) |
+**ASHVANCE TECH presents Smart Interview AI** — an autonomous hiring and technical evaluation platform. Candidates receive a secure, one-click invitation link, complete an identity-verified technical voice interview, and receive a multi-dimensional assessment report with PDF export.
 
----
-
-## ✨ Features
-
-- 📄 Resume upload & AI parsing (PDF/DOCX)
-- 🔐 Multi-factor OTP verification (Email)
-- 🤖 Dynamic AI question generation (role-specific)
-- 🎯 Stage-based interview flow (Greeting → Experience → Scenario → Project → Technical → Behavioral)
-- 🕐 Time-aware greeting (Good Morning / Afternoon / Evening)
-- 🎙️ Voice Mode (Record & transcribe answers)
-- 📊 Live scoring per answer (Technical, Clarity, Depth, Communication)
-- ⏩ Auto-advance to next question
-- 🚨 Anti-cheat monitoring (tab-switch + copy-paste detection)
-- 📈 Final report with Upskilling Resources
-- 📧 Beautiful HTML email notifications
+### Key Highlights
+- 🔐 **Public Secure Deep Links**: Tokenized invitation links (`/interview/[token]` and `/report/[token]`) obfuscate candidate database IDs and enforce expiration guards.
+- 📱 **Mobile-First Responsive UX**: Dedicated mobile navigation drawer, safe-area inset management (`env(safe-area-inset-bottom)`), notch/dynamic island compatibility, and 48px+ touch targets on iOS Safari and Android Chrome.
+- 🎙️ **Autonomous Conversational Voice Loop**: Zero-click turn-taking: AI speaks question via TTS → Speech recognition auto-listens → 2.4s natural silence auto-submits → AI evaluates and delivers follow-up.
+- 🛑 **Real-time Interruption / Barge-in**: Candidate speech immediately halts AI audio playback to ensure a natural interview cadence.
+- 🌓 **Dual Luxury Theme Engine**: Persistent Dark Mode (*Deep Navy / Midnight / Electric Cyan*) and Light Mode (*Soft White / Cool Navy / High-contrast Blue*).
+- 📊 **Executive Assessment PDF**: ReportLab generated corporate PDF reports with official ASHVANCE TECH branding, composite score gauges, strength analysis, and upskilling roadmaps.
+- 📨 **Corporate Email Automation**: Exactly two strict, non-spam automated email pipelines (OTP verification and Executive Assessment with PDF attachment).
 
 ---
 
-## 🔧 Local Development
+## 🏗️ Production Architecture
+
+```text
+  Candidate (Mobile / Desktop)
+              │
+              ▼
+   Vercel Frontend (Next.js 14)
+   [https://frontend-nine-tau-65.vercel.app]
+              │
+              ▼ (CORS Authenticated / REST API)
+   Production Backend (FastAPI / Uvicorn)
+              │
+    ┌─────────┼─────────────────────┐
+    │         │                     │
+    ▼         ▼                     ▼
+AI Engine   SQLite / Postgres    STT / TTS
+(Gemini /   (Async SQLAlchemy)  (Voice Pipeline)
+ Ollama)
+    │
+    ▼
+ReportLab PDF Generation ➔ SMTP Email Automation (PDF Attached)
+```
+
+---
+
+## 📋 Interview State Machine
+
+The interview orchestrator enforces a 7-stage state machine:
+
+1. **`greeting`** — Introduction, role calibration, and welcome.
+2. **`background`** — Candidate journey, core stack, and project highlights.
+3. **`project_deep_dive`** — Architecture breakdown and production challenges.
+4. **`technical`** — Core computer science concepts, distributed systems, and coding patterns.
+5. **`problem_solving`** — Real-time engineering trade-offs, debugging, and failover design.
+6. **`behavioral`** — Cross-functional leadership, sprint deadlines, and conflict resolution.
+7. **`candidate_questions`** — Candidate closing inquiries and next steps.
+
+---
+
+## 🚀 Live Demo & Deployments
+
+- **Production Frontend (Vercel):** [https://frontend-nine-tau-65.vercel.app](https://frontend-nine-tau-65.vercel.app)
+- **GitHub Repository:** [ashutoshbari/AI-Interview-Bot](https://github.com/ashutoshbari/AI-Interview-Bot)
+
+---
+
+## 💻 Local Development Setup
 
 ### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- npm
+- **Node.js**: v18.17+ or v20+
+- **Python**: v3.11+
+- **Git**
 
-### Backend
+### 1. Clone Repository
+```bash
+git clone https://github.com/ashutoshbari/AI-Interview-Bot.git
+cd AI-Interview-Bot
+```
+
+### 2. Backend Setup
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate      # Windows
-# source venv/bin/activate  # Mac/Linux
+
+# Windows
+venv\Scripts\activate
+# macOS / Linux
+# source venv/bin/activate
 
 pip install -r requirements.txt
-cp .env.example .env       # Fill in your keys
-uvicorn app.main:app --reload
-# Runs on http://localhost:8000
-```
+cp .env.example .env
 
-### Frontend
+# Run FastAPI dev server
+uvicorn app.main:app --reload --port 8000
+```
+Backend API docs available at: `http://127.0.0.1:8000/docs`
+
+### 3. Frontend Setup
 ```bash
-cd frontend
+cd ../frontend
 npm install
-# Create .env.local with:
-# NEXT_PUBLIC_API_URL=http://localhost:8000
 npm run dev
-# Runs on http://localhost:3000
 ```
+Open `http://localhost:3000` in your browser.
 
 ---
 
-## 🌍 Deploy to Production (Free)
+## ⚙️ Environment Variables Reference
 
-### Step 1 — Push to GitHub
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/YOUR_USERNAME/ai-interview-bot.git
-git push -u origin main
-```
+### Backend (`backend/.env`)
+| Variable | Description | Required | Example |
+|---|---|---|---|
+| `GEMINI_API_KEY` | Google Gemini AI API key | Yes | `AIzaSy...` |
+| `DATABASE_URL` | Async SQLAlchemy Database URL | Yes | `sqlite+aiosqlite:///./ai_interview.db` |
+| `MAIL_USERNAME` | SMTP sender username | Yes | `recruitment@ashvance.tech` |
+| `MAIL_PASSWORD` | SMTP app password | Yes | `your_16_char_app_password` |
+| `MAIL_FROM` | Sender address | Yes | `recruitment@ashvance.tech` |
+| `MAIL_SERVER` | SMTP host | Yes | `smtp.gmail.com` |
+| `MAIL_PORT` | SMTP port | Yes | `587` |
+| `FRONTEND_URL` | Allowed CORS origins (comma-separated) | Yes (prod) | `https://frontend-nine-tau-65.vercel.app` |
 
-### Step 2 — Deploy Backend on Render (Free)
-1. Go to [https://render.com](https://render.com) → Sign up
-2. Click **New → Web Service**
-3. Connect your GitHub repo → Select the **`backend`** folder as Root Directory
-4. Set:
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - **Runtime:** Python 3.11
-5. Add Environment Variables:
-   ```
-   GEMINI_API_KEY=your_gemini_api_key
-   MAIL_USERNAME=Ashutoshbariofficial@gmail.com
-   MAIL_PASSWORD=enzkuvdcqfosykib
-   MAIL_FROM=Ashutoshbariofficial@gmail.com
-   MAIL_SERVER=smtp.gmail.com
-   MAIL_PORT=587
-   DATABASE_URL=sqlite+aiosqlite:///./ai_interview.db
-   FRONTEND_URL=https://your-app.vercel.app
-   ```
-6. Click **Create Web Service**
-7. Copy your backend URL (e.g. `https://ai-interview-bot.onrender.com`)
-
-### Step 3 — Deploy Frontend on Vercel (Free)
-1. Go to [https://vercel.com](https://vercel.com) → Sign up with GitHub
-2. Click **Add New → Project**
-3. Import your GitHub repo → Set **Root Directory** to `frontend`
-4. Add Environment Variable:
-   ```
-   NEXT_PUBLIC_API_URL=https://ai-interview-bot.onrender.com
-   ```
-5. Click **Deploy**
-6. Your app is live at `https://your-app.vercel.app` 🎉
-
-### Step 4 — Update CORS on Backend
-Go back to Render → Environment Variables → Add:
-```
-FRONTEND_URL=https://your-app.vercel.app
-```
-Then click **Manual Deploy → Deploy Latest Commit**
-
----
-
-## 🔑 Environment Variables Reference
-
-### Backend (.env)
-| Variable | Description | Required |
+### Frontend (`frontend/.env.local`)
+| Variable | Description | Default (Local) |
 |---|---|---|
-| `GEMINI_API_KEY` | Google Gemini API key | ✅ |
-| `MAIL_USERNAME` | Gmail address for sending emails | ✅ |
-| `MAIL_PASSWORD` | Gmail App Password (16-char) | ✅ |
-| `MAIL_FROM` | Sender email (same as username) | ✅ |
-| `FRONTEND_URL` | Vercel frontend URL for CORS | ✅ (prod) |
-| `TWILIO_ACCOUNT_SID` | Twilio SID for SMS OTP | Optional |
-| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Optional |
-| `TWILIO_FROM_NUMBER` | Twilio phone number | Optional |
-
-### Frontend (.env.local)
-| Variable | Description |
-|---|---|
-| `NEXT_PUBLIC_API_URL` | Backend URL (localhost or Render URL) |
+| `NEXT_PUBLIC_API_URL` | Production Backend API Endpoint | `http://127.0.0.1:8000` |
 
 ---
 
-## 📁 Project Structure
+## 📱 Mobile-First Testing Matrix
 
-```
-AI_bot/
-├── backend/
-│   ├── app/
-│   │   ├── models/          # SQLAlchemy models
-│   │   ├── routers/         # API endpoints
-│   │   ├── services/        # AI, OTP, Email logic
-│   │   ├── schemas/         # Pydantic schemas
-│   │   └── main.py          # FastAPI app entry point
-│   ├── requirements.txt
-│   ├── render.yaml          # Render deployment config
-│   └── .env                 # Local environment variables
-└── frontend/
-    ├── app/
-    │   ├── page.tsx          # Registration
-    │   ├── verify/           # OTP verification
-    │   ├── interview/        # Interview session
-    │   └── report/           # Final report
-    ├── vercel.json           # Vercel deployment config
-    └── .env.local            # Local environment variables
-```
+| Platform | Browser | Tested Capabilities | Status |
+|---|---|---|---|
+| **iOS** (iPhone 14/15) | Safari | Mobile Drawer, Dynamic Island, SpeechRecognition, PDF Open | ✅ Passed |
+| **iOS** (iPhone) | Chrome | Viewport scaling, Touch targets, Dark/Light switch | ✅ Passed |
+| **Android** | Chrome | Continuous STT, Hands-free turn-taking, Responsive gauges | ✅ Passed |
+| **Android** | Samsung Internet | OTP auto-advance, Audio synthesis, PDF streaming | ✅ Passed |
+| **Desktop** | Chrome / Edge | Full 1440px multi-column studio, Proctoring monitor | ✅ Passed |
 
 ---
 
-## 📄 License
-MIT © Ashutosh Bari
+## 📄 License & Copyright
+
+© ASHVANCE TECH. All rights reserved.  
+Smart Interview AI is a trademark of ASHVANCE TECH.

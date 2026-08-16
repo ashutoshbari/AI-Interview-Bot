@@ -21,15 +21,15 @@ client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY or "placeholder")
 
 
 # ── Interview Stage Definitions ──────────────────────────────────────────────
-# Each stage has: a display name, and a question range (min, max answered before advancing)
 STAGE_PROGRESSION = [
     # (stage_key, display_name, min_answered_to_enter, max_questions_in_stage)
-    ("greeting",    "Greeting & Introduction",  0,  1),   # 1 question only
-    ("background",  "Background & Experience",  1,  2),   # 1-2 questions
-    ("project",     "Project Deep Dive",        3,  3),   # 2-3 questions
-    ("technical",   "Technical Skills",         6,  3),   # 2-3 questions
-    ("behavioral",  "Behavioral & Situational", 9,  2),   # 1-2 questions
-    ("closing",     "Closing",                  11, 1),   # 1 question
+    ("greeting",            "Greeting & Introduction",          0,  1),   # Q1: Introduction
+    ("background",          "Background & Journey",             1,  2),   # Q2-Q3: Career context
+    ("project_deep_dive",   "Project Deep Dive",                3,  2),   # Q4-Q5: Core projects
+    ("technical",           "Technical Architecture & Depth",   5,  2),   # Q6-Q7: In-depth tech
+    ("problem_solving",     "Problem Solving & Edge Cases",     7,  2),   # Q8-Q9: Scenarios & scale
+    ("behavioral",          "Behavioral & Collaboration",       9,  2),   # Q10-Q11: Leadership & teamwork
+    ("candidate_questions", "Candidate Questions & Closing",    11, 1),   # Q12: Candidate queries
 ]
 
 
@@ -37,9 +37,6 @@ def _determine_stage(history: list) -> tuple[str, str]:
     """
     Determine the current interview stage based on number of answered questions.
     Returns (stage_key, display_name).
-
-    This replaces the broken `stages[len(history) // 2]` formula that caused
-    GREETING to repeat when 1 question was answered (1//2 == 0).
     """
     answered_count = len([h for h in history if h.answer])
 
@@ -65,25 +62,21 @@ def _get_time_greeting() -> str:
 
 def _tokenize(text: str) -> set:
     """Extract meaningful words from a question for similarity comparison."""
-    # Remove punctuation, lowercase, split
     words = re.findall(r'\b[a-z]{3,}\b', text.lower())
-    # Remove common stop words
     stopwords = {
         "the", "and", "for", "you", "your", "can", "how", "what", "tell",
         "about", "did", "was", "were", "have", "that", "with", "this",
         "from", "when", "which", "where", "why", "would", "could", "should",
-        "please", "describe", "explain", "walk", "through", "through",
-        "interview", "question", "answer", "role", "position"
+        "please", "describe", "explain", "walk", "through",
+        "interview", "question", "answer", "role", "position", "ashvance", "tech"
     }
     return set(words) - stopwords
 
 
-def _is_duplicate(new_question: str, history: list, threshold: float = 0.5) -> bool:
+def _is_duplicate(new_question: str, history: list, threshold: float = 0.45) -> bool:
     """
-    Check if a new question is semantically similar to any recent question.
+    Check if a new question is semantically similar to any prior question.
     Uses Jaccard similarity on keyword tokens.
-
-    Returns True if the question is a duplicate (should be rejected).
     """
     if not new_question or not history:
         return False
@@ -92,15 +85,14 @@ def _is_duplicate(new_question: str, history: list, threshold: float = 0.5) -> b
     if not new_tokens:
         return False
 
-    # Check against the last 8 questions to catch semantic repeats
-    recent_questions = [h.question for h in history[-8:] if h.question]
+    # Check against ALL past questions to eliminate semantic repeats
+    recent_questions = [h.question for h in history if h.question]
 
     for past_q in recent_questions:
         past_tokens = _tokenize(past_q)
         if not past_tokens:
             continue
 
-        # Jaccard similarity: |intersection| / |union|
         intersection = len(new_tokens & past_tokens)
         union = len(new_tokens | past_tokens)
         if union == 0:
@@ -121,91 +113,96 @@ def _is_duplicate(new_question: str, history: list, threshold: float = 0.5) -> b
 _FALLBACK_QUESTIONS = {
     "greeting": {
         "question": (
-            f"{_get_time_greeting()}! Welcome to your AI-powered interview. "
+            f"{_get_time_greeting()}! Welcome to your AI interview at ASHVANCE TECH. "
             "I've reviewed your profile and I'm excited to speak with you today. "
-            "Could you start by giving me a brief introduction — your background, "
-            "the kind of work you enjoy most, and what brought you to apply for this role?"
+            "Could you start by introducing yourself, your core technical focus, "
+            "and what excites you most about this role?"
         ),
         "type": "introduction",
         "stage": "greeting",
     },
     "background": {
         "question": (
-            "Can you walk me through your career journey so far — your most recent role, "
-            "the responsibilities you owned, and what you're most proud of from that experience?"
+            "Can you walk me through your engineering journey — your recent roles, "
+            "key architectural responsibilities, and a significant milestone you delivered?"
         ),
         "type": "experience",
         "stage": "background",
     },
-    "project": {
+    "project_deep_dive": {
         "question": (
-            "I'd love to do a deep dive into one of your projects. "
-            "Pick the most technically challenging one and walk me through the problem, "
-            "your architecture decisions, and the key technical choices you made."
+            "I'd like to dive deep into a primary project mentioned on your resume. "
+            "Walk me through the core problem, your architectural choices, and how you addressed "
+            "technical bottlenecks during implementation."
         ),
         "type": "project",
-        "stage": "project",
+        "stage": "project_deep_dive",
     },
     "technical": {
         "question": (
-            "Can you explain how you approach designing a system that needs to scale to "
-            "millions of users? Walk me through your choice of architecture, storage, "
-            "and how you'd handle load distribution."
+            "When designing a distributed service that handles high concurrency, "
+            "how do you evaluate data consistency, caching strategies, and resilient error recovery?"
         ),
         "type": "technical",
         "stage": "technical",
     },
+    "problem_solving": {
+        "question": (
+            "Suppose a critical production microservice experiences latency spikes under unexpected load. "
+            "How do you systematically isolate the root cause and mitigate the bottleneck?"
+        ),
+        "type": "problem_solving",
+        "stage": "problem_solving",
+    },
     "behavioral": {
         "question": (
-            "Tell me about a time when you faced a significant technical challenge under "
-            "a tight deadline. How did you prioritize, collaborate with your team, "
-            "and what was the outcome?"
+            "Tell me about a time you had a technical disagreement with a teammate or stakeholder. "
+            "How did you navigate the conversation, evaluate trade-offs, and reach a constructive outcome?"
         ),
         "type": "behavioral",
         "stage": "behavioral",
     },
-    "closing": {
+    "candidate_questions": {
         "question": (
-            "We're wrapping up the interview. Is there anything specific about this role, "
-            "the team structure, or the technical challenges you'd like to ask me about?"
+            "We are nearing the conclusion of our evaluation session. Do you have any questions "
+            "regarding the technical direction, culture, or engineering standards at ASHVANCE TECH?"
         ),
         "type": "closing",
-        "stage": "closing",
+        "stage": "candidate_questions",
     },
 }
 
 
-DYNAMIC_QUESTION_PROMPT = """You are an expert Senior Technical Interviewer with 15+ years of experience at top tech companies (Google, Meta, Amazon).
+DYNAMIC_QUESTION_PROMPT = """You are an expert Senior Technical Interviewer conducting a real-time interview at ASHVANCE TECH for the Smart Interview AI platform.
 
 CANDIDATE: {name}
 POSITION: {position}
-CURRENT STAGE: {stage_display}
+CURRENT STAGE: {stage_display} ({stage_key})
 PROFILE SUMMARY:
 {resume_summary}
 
 RECENT INTERVIEW HISTORY (Last 6 exchanges):
 {history}
 
-QUESTIONS ALREADY ASKED (DO NOT repeat or rephrase these):
+ALL QUESTIONS ALREADY ASKED (STRICT RULE: NEVER repeat or rephrase any of these):
 {asked_questions}
 
 STAGE INSTRUCTIONS:
 {stage_instructions}
 
 CRITICAL RULES:
-1. Generate EXACTLY ONE question for the current stage.
-2. DO NOT ask any question that is semantically similar to the "QUESTIONS ALREADY ASKED" list above.
-3. Reference specific details from the PROFILE SUMMARY — do not ask generic questions.
-4. If the last answer was shallow, probe deeper on the same topic.
-5. If the last answer was strong, increase difficulty or explore a new dimension.
-6. Do NOT include meta-talk, scores, greetings (unless in greeting stage), or labels in the question text.
-7. Keep questions natural and conversational — as if you are actually speaking to the candidate.
-8. After {max_questions} total questions, set is_interview_complete to true.
+1. Generate EXACTLY ONE contextual question for the current stage.
+2. DO NOT ask any question semantically similar to any question in "ALL QUESTIONS ALREADY ASKED".
+3. Specifically reference details from the candidate's resume or their previous answers.
+4. Adapt difficulty: probe deeper if previous response was vague; explore edge cases if it was strong.
+5. Do NOT output metadata, score rubrics, or markdown fences outside the JSON.
+6. Keep the phrasing spoken, natural, professional, and clear.
+7. If total answered questions >= {max_questions}, set is_interview_complete to true.
 
 Return ONLY a valid JSON object:
 {{
   "question": "...",
-  "type": "introduction|experience|project|technical|behavioral|closing",
+  "type": "{stage_key}",
   "stage": "{stage_key}",
   "is_interview_complete": false
 }}
@@ -213,30 +210,32 @@ Return ONLY a valid JSON object:
 
 STAGE_INSTRUCTIONS = {
     "greeting": (
-        "This is the FIRST and ONLY greeting. Greet the candidate warmly using '{greeting}', "
-        "address them by name ({name}), and ask for a brief introduction of themselves. "
-        "This greeting must happen EXACTLY ONCE. After this, NEVER ask for introduction again."
+        "This is the initial greeting. Greet {name} warmly ({greeting}) on behalf of ASHVANCE TECH "
+        "and invite them to share an overview of their background and passion for {position}."
     ),
     "background": (
-        "Ask about their career journey, most recent role, responsibilities, or team experience. "
-        "Reference specific details from their resume summary if available."
+        "Ask about candidate's career progression, key engineering environments, or responsibilities owned. "
+        "Reference specific timeline points or technologies from their profile."
     ),
-    "project": (
-        "Deep dive into a specific project from their resume. Ask about: architecture, "
-        "technology choices, algorithms, implementation challenges, performance optimization, "
-        "or deployment. Use the previous answer to decide the follow-up direction."
+    "project_deep_dive": (
+        "Select a prominent project from their resume. Ask about system architecture, design trade-offs, "
+        "performance optimizations, and challenges they personally resolved."
     ),
     "technical": (
-        "Ask technical questions ONLY about technologies specifically mentioned in their resume. "
-        "Do not ask about technologies they haven't listed. Adapt difficulty based on their previous answers."
+        "Ask targeted technical depth questions specifically on technologies, languages, frameworks, or "
+        "system components mentioned in their resume. Adapt complexity to their seniority."
+    ),
+    "problem_solving": (
+        "Present an architectural or engineering scenario involving scale, latency, data integrity, "
+        "or fault tolerance related to their domain."
     ),
     "behavioral": (
-        "Ask a situational or behavioral question about teamwork, conflict resolution, "
-        "deadlines, leadership, or professional growth. Use the STAR format implicitly."
+        "Inquire about teamwork, cross-functional collaboration, ownership, or handling delivery pressure. "
+        "Encourage specific situational examples."
     ),
-    "closing": (
-        "This is the final question. Invite the candidate to ask any questions they have "
-        "about the role, team, or company. Keep it warm and encouraging."
+    "candidate_questions": (
+        "Invite the candidate to ask any technical or organizational questions regarding ASHVANCE TECH, "
+        "engineering practices, or the role."
     ),
 }
 

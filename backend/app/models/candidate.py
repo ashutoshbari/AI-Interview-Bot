@@ -24,6 +24,10 @@ class Candidate(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # ── Feature additions ───────────────────────────────────────────────────────
+    secure_token = Column(String(64), unique=True, index=True, nullable=True)  # Cryptographic public interview link token
+    token_expires_at = Column(DateTime(timezone=True), nullable=True)
     is_verified = Column(Boolean, default=False, nullable=False)  # OTP verified
     tab_switch_count = Column(Integer, default=0, nullable=False)  # Anti-cheat: tab switches
     copy_paste_count = Column(Integer, default=0, nullable=False)  # Anti-cheat: paste attempts
+    completion_email_sent = Column(Boolean, default=False, nullable=False)  # Email deduplication
+    completion_email_sent_at = Column(DateTime(timezone=True), nullable=True)

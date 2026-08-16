@@ -1,5 +1,6 @@
 """
-Email Service — Uses Python stdlib smtplib with luxury, responsive HTML emails.
+Email Service — ASHVANCE TECH Corporate Email Automation.
+Supports luxury, corporate-branded responsive HTML emails with PDF report attachments.
 Thread-safe and asynchronous execution via asyncio.to_thread to prevent event loop blocking.
 """
 
@@ -8,7 +9,8 @@ import smtplib
 import asyncio
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Optional, Dict, Any
+from email.mime.application import MIMEApplication
+from typing import Optional, Dict, Any, List
 
 from app.config import settings
 
@@ -16,91 +18,127 @@ logger = logging.getLogger(__name__)
 
 
 def _is_email_configured() -> bool:
-    """Return True only if real SMTP credentials have been set."""
+    """Return True only if real SMTP credentials have been configured."""
     placeholder_keywords = {"your_gmail", "your_16_char", "your_email", "example.com", "yourcompany.com"}
     username = settings.MAIL_USERNAME.lower()
     return bool(settings.MAIL_USERNAME) and not any(k in username for k in placeholder_keywords)
 
 
-def _send_email_sync(to: str, subject: str, html_body: str) -> bool:
+def _send_email_sync(
+    to: str,
+    subject: str,
+    html_body: str,
+    attachment_bytes: Optional[bytes] = None,
+    attachment_filename: Optional[str] = None
+) -> bool:
     """
-    Send one HTML email via SMTP synchronously (executed inside worker threads).
+    Send one HTML email (with optional PDF attachment) via SMTP synchronously.
+    Runs inside worker thread to avoid blocking the asyncio event loop.
     """
     if not _is_email_configured():
-        logger.info(f"Email skipped (SMTP not configured) — would have sent: {subject!r} → {to}")
+        logger.info(f"[DEV] Email skipped (SMTP not configured): {subject!r} -> {to}")
         return False
 
     try:
-        msg = MIMEMultipart("alternative")
+        msg = MIMEMultipart("mixed")
         msg["Subject"] = subject
-        msg["From"] = f"AI Interview Bot <{settings.MAIL_FROM}>"
+        msg["From"] = f"ASHVANCE TECH <{settings.MAIL_FROM}>"
         msg["To"] = to
-        msg.attach(MIMEText(html_body, "html"))
 
-        with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=10) as server:
+        # HTML body part
+        body_part = MIMEText(html_body, "html")
+        msg.attach(body_part)
+
+        # Optional PDF attachment
+        if attachment_bytes and attachment_filename:
+            pdf_part = MIMEApplication(attachment_bytes, _subtype="pdf")
+            pdf_part.add_header("Content-Disposition", "attachment", filename=attachment_filename)
+            msg.attach(pdf_part)
+
+        with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=12) as server:
             server.ehlo()
             server.starttls()
             server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
             server.sendmail(settings.MAIL_FROM, [to], msg.as_string())
 
-        logger.info(f"✅ Email sent successfully: {subject!r} → {to}")
+        logger.info(f"OK: Email sent successfully: {subject!r} -> {to}")
         return True
 
     except Exception as exc:
-        logger.error(f"❌ Email failed ({to}): {exc}")
+        logger.error(f"Email failed ({to}): {exc}")
         return False
 
 
-def _send_email_async(to: str, subject: str, html_body: str):
+def _send_email_async(
+    to: str,
+    subject: str,
+    html_body: str,
+    attachment_bytes: Optional[bytes] = None,
+    attachment_filename: Optional[str] = None
+):
     """Fire-and-forget non-blocking email task."""
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(asyncio.to_thread(_send_email_sync, to, subject, html_body))
+        loop.create_task(asyncio.to_thread(_send_email_sync, to, subject, html_body, attachment_bytes, attachment_filename))
     except RuntimeError:
-        # If outside loop, execute via background thread
-        asyncio.run(asyncio.to_thread(_send_email_sync, to, subject, html_body))
+        asyncio.run(asyncio.to_thread(_send_email_sync, to, subject, html_body, attachment_bytes, attachment_filename))
 
 
-# ─────────────────────────── Luxury Email Base Template ──────────────────────────
+# ─────────────────────────── ASHVANCE TECH Email Layout ──────────────────────────
 
-def _wrap_luxury_email(header_title: str, header_subtitle: str, gradient_start: str, gradient_end: str, icon: str, body_html: str) -> str:
+def _wrap_ashvance_email(title: str, subtitle: str, body_html: str) -> str:
+    """Wraps body in an executive ASHVANCE TECH corporate template."""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{header_title}</title>
+  <title>{title}</title>
 </head>
-<body style="margin:0;padding:0;background-color:#070714;font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;color:#f8fafc;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#070714;padding:40px 16px;">
+<body style="margin:0;padding:0;background-color:#0B0F1A;font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;color:#F8FAFC;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#0B0F1A;padding:40px 16px;">
     <tr>
       <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;border-radius:24px;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,0.7);border:1px solid rgba(99,102,241,0.25);background-color:#0f0f26;">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;border-radius:20px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,0.6);border:1px solid rgba(0,136,204,0.3);background-color:#0F172A;">
           
-          <!-- HERO HEADER -->
+          <!-- CORPORATE BRAND HEADER -->
           <tr>
-            <td style="background:linear-gradient(135deg, {gradient_start} 0%, {gradient_end} 100%);padding:44px 40px;text-align:center;">
-              <div style="display:inline-block;width:64px;height:64px;line-height:64px;background:rgba(255,255,255,0.15);border-radius:18px;backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.3);font-size:32px;margin-bottom:14px;">
-                {icon}
+            <td style="background:linear-gradient(135deg, #0A0F1D 0%, #0F172A 50%, #0088CC 100%);padding:36px 40px;border-bottom:1px solid rgba(255,255,255,0.1);">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td>
+                    <h1 style="margin:0;color:#FFFFFF;font-size:22px;font-weight:800;letter-spacing:-0.5px;">ASHVANCE TECH</h1>
+                    <p style="margin:4px 0 0;color:#00C2FF;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Smart Interview AI</p>
+                  </td>
+                  <td align="right">
+                    <div style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:6px 14px;color:#E2E8F0;font-size:11px;font-weight:600;">
+                      Official Notification
+                    </div>
+                  </td>
+                </tr>
+              </table>
+              <div style="margin-top:20px;border-top:1px solid rgba(255,255,255,0.1);padding-top:16px;">
+                <h2 style="margin:0;color:#FFFFFF;font-size:18px;font-weight:700;">{title}</h2>
+                <p style="margin:4px 0 0;color:#94A3B8;font-size:13px;">{subtitle}</p>
               </div>
-              <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:800;letter-spacing:-0.5px;">{header_title}</h1>
-              <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:14px;font-weight:500;">{header_subtitle}</p>
             </td>
           </tr>
 
-          <!-- BODY CONTENT -->
+          <!-- MAIN CONTENT BODY -->
           <tr>
-            <td style="padding:40px 44px;background-color:#0f0f26;">
+            <td style="padding:36px 40px;background-color:#0F172A;">
               {body_html}
             </td>
           </tr>
 
-          <!-- FOOTER -->
+          <!-- CORPORATE FOOTER -->
           <tr>
-            <td style="background-color:#070714;padding:24px 40px;text-align:center;border-top:1px solid rgba(255,255,255,0.06);">
-              <p style="margin:0;color:#475569;font-size:12px;line-height:1.5;">
-                AI Interview Bot Platform • Automated Intelligent Notification<br>
-                Please do not reply directly to this email.
+            <td style="background-color:#0A0F1D;padding:24px 40px;text-align:center;border-top:1px solid rgba(255,255,255,0.06);">
+              <p style="margin:0 0 4px;color:#FFFFFF;font-size:12px;font-weight:700;">ASHVANCE TECH • Smart Interview AI</p>
+              <p style="margin:0 0 10px;color:#64748B;font-size:11px;">Intelligent Hiring. Smarter Interviews.</p>
+              <p style="margin:0;color:#475569;font-size:10px;line-height:1.4;">
+                © ASHVANCE TECH. All rights reserved.<br/>
+                This is an automated system dispatch. Please do not reply directly to this email.
               </p>
             </td>
           </tr>
@@ -112,177 +150,179 @@ def _wrap_luxury_email(header_title: str, header_subtitle: str, gradient_start: 
 </html>"""
 
 
-# ─────────────────────────── Email Manager ────────────────────────────────────
-
 class EmailManager:
+    """Manages the two authorized automated emails for ASHVANCE TECH."""
 
-    def send_interview_started(self, email: str, name: str, position: str):
-        """Notify candidate that their interview is live."""
-        body = f"""
-        <div style="display:inline-block;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:30px;padding:6px 16px;margin-bottom:20px;">
-          <span style="color:#818cf8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">🎯 Session Active</span>
-        </div>
-        <h2 style="margin:0 0 16px;color:#ffffff;font-size:22px;font-weight:700;">Welcome, {name}! 👋</h2>
-        <p style="margin:0 0 20px;color:#94a3b8;font-size:15px;line-height:1.7;">
-          Your AI-powered technical interview for the <strong style="color:#ffffff;">{position}</strong> position is officially in progress.
-        </p>
-
-        <div style="background:linear-gradient(135deg, rgba(99,102,241,0.1) 0%, rgba(168,85,247,0.1) 100%);border:1px solid rgba(99,102,241,0.25);border-radius:16px;padding:20px;margin-bottom:28px;">
-          <p style="margin:0 0 6px;color:#c084fc;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Target Position</p>
-          <p style="margin:0;color:#ffffff;font-size:20px;font-weight:800;">{position}</p>
-        </div>
-
-        <h3 style="margin:0 0 14px;color:#ffffff;font-size:15px;font-weight:700;">💡 Key Guidelines:</h3>
-        <ul style="margin:0 0 28px;padding-left:20px;color:#cbd5e1;font-size:14px;line-height:1.8;">
-          <li>Speak clearly or type structured answers with specific real-world examples.</li>
-          <li>The AI interviewer adapts difficulty dynamically based on your responses.</li>
-          <li>Upon completion, you will instantly receive your detailed performance scorecard.</li>
-        </ul>
-
-        <p style="margin:0;color:#64748b;font-size:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
-          Candidate Portal ID: Verified Session
-        </p>"""
-        
-        html = _wrap_luxury_email(
-            "AI Interview Bot",
-            "Technical Assessment Started",
-            "#4338ca",
-            "#8b5cf6",
-            "🚀",
-            body
+    def send_otp_email(self, email: str, name: str, otp_code: str):
+        """
+        EMAIL 1: Official Verification PIN Email.
+        Subject: ASHVANCE TECH — Interview Verification Code
+        """
+        digits_html = "".join(
+            f'<div style="display:inline-block;width:48px;height:58px;line-height:58px;'
+            f'text-align:center;font-size:28px;font-weight:900;color:#FFFFFF;'
+            f'background:linear-gradient(135deg, rgba(0,136,204,0.3) 0%, rgba(124,58,237,0.3) 100%);'
+            f'border:2px solid #00C2FF;border-radius:10px;margin:0 4px;'
+            f'font-family:\'Courier New\',monospace;box-shadow:0 6px 15px rgba(0,136,204,0.25);">{d}</div>'
+            for d in otp_code
         )
-        _send_email_async(email, f"🎯 Your AI Interview Has Begun — {position}", html)
-
-    def send_interview_completed(self, email: str, name: str, position: str, overall_score: Optional[float] = None, recommendation: Optional[str] = None):
-        """Notify candidate of interview completion with scorecard."""
-        score_html = ""
-        if overall_score is not None:
-            color = "#10b981" if overall_score >= 75 else "#f59e0b" if overall_score >= 50 else "#ef4444"
-            rec_text = recommendation or ("Strong Hire" if overall_score >= 80 else "Hire" if overall_score >= 60 else "Under Review")
-            score_html = f"""
-            <div style="background:linear-gradient(180deg, rgba(15,23,42,0.8) 0%, rgba(15,15,38,0.9) 100%);border:2px solid {color}55;border-radius:20px;padding:28px 20px;text-align:center;margin-bottom:28px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
-              <p style="margin:0 0 8px;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Overall Performance Score</p>
-              <div style="font-size:56px;font-weight:900;color:{color};line-height:1;margin-bottom:8px;font-family:'Courier New',monospace;">
-                {overall_score:.0f}<span style="font-size:24px;color:#64748b;">/100</span>
-              </div>
-              <div style="display:inline-block;background:{color}22;border:1px solid {color}66;border-radius:20px;padding:6px 16px;">
-                <span style="color:{color};font-size:13px;font-weight:700;">Verdict: {rec_text}</span>
-              </div>
-            </div>"""
 
         body = f"""
-        <div style="display:inline-block;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);border-radius:30px;padding:6px 16px;margin-bottom:20px;">
-          <span style="color:#34d399;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">🎉 Completed Successfully</span>
+        <p style="margin:0 0 16px;color:#E2E8F0;font-size:15px;line-height:1.6;">
+          Dear <strong>{name}</strong>,
+        </p>
+        <p style="margin:0 0 24px;color:#94A3B8;font-size:14px;line-height:1.6;">
+          You have registered for an AI-assisted technical interview on the <strong>ASHVANCE TECH — Smart Interview AI</strong> platform. To verify your identity and unlock your interview studio, please enter the one-time security code below:
+        </p>
+
+        <!-- OTP BOX -->
+        <div style="background:rgba(10,15,29,0.8);border:1px solid rgba(0,194,255,0.4);border-radius:16px;padding:28px 16px;text-align:center;margin-bottom:28px;">
+          <p style="margin:0 0 14px;color:#00C2FF;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Your 6-Digit One-Time Code</p>
+          <div style="margin-bottom:18px;white-space:nowrap;">
+            {digits_html}
+          </div>
+          <div style="display:inline-block;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);border-radius:20px;padding:4px 14px;">
+            <span style="color:#FBBF24;font-size:12px;font-weight:600;">⏱️ Valid for next {settings.OTP_EXPIRY_MINUTES} minutes</span>
+          </div>
         </div>
-        <h2 style="margin:0 0 12px;color:#ffffff;font-size:22px;font-weight:700;">Congratulations, {name}! 🌟</h2>
-        <p style="margin:0 0 24px;color:#94a3b8;font-size:15px;line-height:1.7;">
-          You have completed all stages of the <strong style="color:#ffffff;">{position}</strong> evaluation. The AI has synthesized your responses and generated an in-depth scorecard.
+
+        <p style="margin:0 0 12px;color:#94A3B8;font-size:13px;line-height:1.5;">
+          <strong>Security Notice:</strong> Do not share this code with anyone. ASHVANCE TECH representatives will never ask for your verification PIN.
         </p>
-
-        {score_html}
-
-        <p style="margin:0 0 16px;color:#cbd5e1;font-size:14px;line-height:1.7;">
-          Your full analytics report with detailed strengths, growth areas, and hiring notes has been archived in the recruiter dashboard.
+        <p style="margin:0;color:#64748B;font-size:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:16px;">
+          If you did not initiate this request, please contact recruitment security immediately.
         </p>
+        """
 
-        <p style="margin:0;color:#64748b;font-size:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
-          Thank you for interviewing with AI Interview Bot. The recruitment team will reach out with next steps.
-        </p>"""
-
-        html = _wrap_luxury_email(
-            "Interview Results",
-            f"Candidate Performance Summary • {position}",
-            "#059669",
-            "#10b981",
-            "🏆",
-            body
+        html = _wrap_ashvance_email(
+          "Identity Verification",
+          "One-Time Security Code for AI Interview Access",
+          body
         )
-        _send_email_async(email, f"🏆 Interview Scorecard & Feedback — {name}", html)
+        subject = "ASHVANCE TECH — Interview Verification Code"
+        _send_email_async(email, subject, html)
 
-    def send_interviewer_alert(
+    def send_completion_email(
         self,
-        event: str,
-        candidate_name: str,
-        candidate_email: str,
+        email: str,
+        name: str,
         position: str,
-        extra: Optional[Dict[str, Any]] = None,
+        report: dict,
+        pdf_bytes: Optional[bytes] = None
     ):
-        """Send a real-time HR alert to the INTERVIEWER_EMAIL address."""
-        interviewer_email = settings.INTERVIEWER_EMAIL
-        if not interviewer_email or "@" not in interviewer_email or "your" in interviewer_email.lower():
-            logger.debug("No INTERVIEWER_EMAIL configured — skipping HR alert.")
-            return
+        """
+        EMAIL 2: Official Interview Completed & Assessment Report Email.
+        Subject: ASHVANCE TECH — Interview Completed & Assessment Report
+        Attaches: ASHVANCE_TECH_Interview_Report_<CandidateName>.pdf
+        """
+        overall_score = report.get("overall_score", 0)
+        try:
+            score_num = float(overall_score)
+        except (ValueError, TypeError):
+            score_num = 75.0
 
-        extra = extra or {}
-        score = extra.get("overall_score")
-        rec = extra.get("recommendation", "Evaluation in progress")
+        score_color = "#10B981" if score_num >= 75 else "#F59E0B" if score_num >= 50 else "#EF4444"
+        verdict = report.get("recommendation") or report.get("verdict") or ("Hire" if score_num >= 65 else "Under Review")
 
-        if event == "STARTED":
-            header_title = "HR Alert: Interview Started"
-            header_sub = f"Candidate: {candidate_name}"
-            grad_start, grad_end = "#4338ca", "#6366f1"
-            icon = "🔔"
-            status_badge = '<span style="color:#818cf8;font-weight:700;">🔵 Interview Commenced</span>'
-            subject = f"🔔 [Recruiter Alert] {candidate_name} started interview for {position}"
-        elif event == "COMPLETED":
-            header_title = "HR Alert: Interview Finished"
-            header_sub = f"Score: {score:.0f}/100 • {candidate_name}" if score is not None else candidate_name
-            grad_start, grad_end = "#059669", "#10b981"
-            icon = "📋"
-            status_badge = '<span style="color:#34d399;font-weight:700;">🟢 Completed & Graded</span>'
-            subject = f"📋 [Recruiter Alert] {candidate_name} completed interview ({rec})"
-        else:
-            header_title = f"HR Alert: {event}"
-            header_sub = candidate_name
-            grad_start, grad_end = "#d97706", "#f59e0b"
-            icon = "⚠️"
-            status_badge = f'<span style="color:#fbbf24;font-weight:700;">⚠️ {event}</span>'
-            subject = f"⚠️ [Recruiter Alert] {candidate_name} - {event}"
+        # Strengths preview
+        strengths_list = report.get("strengths") or report.get("top_strengths") or []
+        strengths_html = ""
+        for s in strengths_list[:3]:
+            if isinstance(s, dict):
+                title = s.get("title") or s.get("topic") or ""
+                detail = s.get("detail") or s.get("description") or ""
+                item_text = f"<strong>{title}</strong>: {detail}" if title and detail else (title or detail)
+            else:
+                item_text = str(s)
+            strengths_html += f'<li style="margin-bottom:6px;color:#E2E8F0;font-size:13px;line-height:1.5;">{item_text}</li>'
+
+        if not strengths_html:
+            strengths_html = '<li style="color:#E2E8F0;font-size:13px;">Demonstrated strong domain fundamentals and structured problem decomposition.</li>'
+
+        # Growth areas preview
+        weaknesses_list = report.get("weaknesses") or report.get("growth_areas") or []
+        weaknesses_html = ""
+        for w in weaknesses_list[:2]:
+            if isinstance(w, dict):
+                title = w.get("title") or w.get("topic") or ""
+                detail = w.get("detail") or w.get("description") or ""
+                item_text = f"<strong>{title}</strong>: {detail}" if title and detail else (title or detail)
+            else:
+                item_text = str(w)
+            weaknesses_html += f'<li style="margin-bottom:6px;color:#E2E8F0;font-size:13px;line-height:1.5;">{item_text}</li>'
+
+        if not weaknesses_html:
+            weaknesses_html = '<li style="color:#E2E8F0;font-size:13px;">Continue practicing high-scale architectural trade-offs and concise delivery.</li>'
+
+        clean_candidate_name = name.replace(" ", "_")
+        pdf_filename = f"ASHVANCE_TECH_Interview_Report_{clean_candidate_name}.pdf"
 
         body = f"""
-        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:24px;margin-bottom:24px;">
-          <table width="100%" cellpadding="6" cellspacing="0">
-            <tr>
-              <td style="color:#94a3b8;font-size:13px;width:35%;">Status:</td>
-              <td style="font-size:13px;">{status_badge}</td>
-            </tr>
-            <tr>
-              <td style="color:#94a3b8;font-size:13px;">Candidate:</td>
-              <td style="color:#ffffff;font-size:14px;font-weight:700;">{candidate_name}</td>
-            </tr>
-            <tr>
-              <td style="color:#94a3b8;font-size:13px;">Position:</td>
-              <td style="color:#c084fc;font-size:14px;font-weight:600;">{position}</td>
-            </tr>
-            <tr>
-              <td style="color:#94a3b8;font-size:13px;">Email:</td>
-              <td style="color:#e2e8f0;font-size:13px;">{candidate_email or 'None'}</td>
-            </tr>
-            {f'<tr><td style="color:#94a3b8;font-size:13px;">Score:</td><td style="color:#34d399;font-size:16px;font-weight:800;">{score:.0f}/100</td></tr>' if score is not None else ''}
-            {f'<tr><td style="color:#94a3b8;font-size:13px;">Recommendation:</td><td style="color:#ffffff;font-size:14px;font-weight:700;">{rec}</td></tr>' if rec else ''}
-          </table>
+        <p style="margin:0 0 16px;color:#E2E8F0;font-size:15px;line-height:1.6;">
+          Dear <strong>{name}</strong>,
+        </p>
+        <p style="margin:0 0 20px;color:#94A3B8;font-size:14px;line-height:1.6;">
+          Thank you for completing your technical interview with <strong>ASHVANCE TECH</strong>.
+        </p>
+        <p style="margin:0 0 24px;color:#94A3B8;font-size:14px;line-height:1.6;">
+          Your AI-assisted evaluation for the <strong>{position}</strong> position has been successfully synthesized and archived. Your official scorecard and comprehensive performance breakdown are summarized below:
+        </p>
+
+        <!-- SCORECARD HIGHLIGHT -->
+        <div style="background:rgba(10,15,29,0.8);border:1px solid rgba(0,136,204,0.3);border-radius:16px;padding:24px;text-align:center;margin-bottom:28px;">
+          <p style="margin:0 0 6px;color:#94A3B8;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Overall Performance Score</p>
+          <div style="font-size:52px;font-weight:900;color:{score_color};line-height:1;margin-bottom:6px;font-family:'Courier New',monospace;">
+            {score_num:.0f}<span style="font-size:22px;color:#64748B;">/100</span>
+          </div>
+          <div style="display:inline-block;background:{score_color}22;border:1px solid {score_color}66;border-radius:16px;padding:4px 14px;margin-bottom:12px;">
+            <span style="color:{score_color};font-size:12px;font-weight:700;">Verdict: {verdict}</span>
+          </div>
         </div>
 
-        <p style="margin:0;color:#64748b;font-size:12px;">
-          Access the backend dashboard to view complete audio transcripts, code snippets, and PDF summary.
-        </p>"""
+        <!-- KEY STRENGTHS -->
+        <div style="margin-bottom:20px;">
+          <h3 style="margin:0 0 8px;color:#34D399;font-size:14px;font-weight:700;">✅ Key Demonstrated Strengths:</h3>
+          <ul style="margin:0;padding-left:20px;">
+            {strengths_html}
+          </ul>
+        </div>
 
-        html = _wrap_luxury_email(header_title, header_sub, grad_start, grad_end, icon, body)
-        _send_email_async(interviewer_email, subject, html)
+        <!-- GROWTH AREAS -->
+        <div style="margin-bottom:24px;">
+          <h3 style="margin:0 0 8px;color:#FBBF24;font-size:14px;font-weight:700;">📈 Growth & Coaching Areas:</h3>
+          <ul style="margin:0;padding-left:20px;">
+            {weaknesses_html}
+          </ul>
+        </div>
 
-    async def send_status_update(self, email: str, name: str, status: str):
-        """Asynchronous status notification."""
-        body = f"""
-        <h2 style="margin:0 0 16px;color:#ffffff;font-size:20px;font-weight:700;">Hello {name},</h2>
-        <p style="margin:0 0 20px;color:#94a3b8;font-size:15px;line-height:1.7;">
-          Your application & interview status has been updated to:
+        <!-- ATTACHMENT NOTICE -->
+        <div style="background:rgba(0,136,204,0.1);border:1px solid rgba(0,136,204,0.3);border-radius:12px;padding:14px 18px;margin-bottom:24px;">
+          <p style="margin:0;color:#00C2FF;font-size:13px;font-weight:600;">
+            📎 Attached: <strong>{pdf_filename}</strong>
+          </p>
+          <p style="margin:4px 0 0;color:#94A3B8;font-size:12px;">
+            A formal, confidential corporate assessment PDF has been attached to this email for your records.
+          </p>
+        </div>
+
+        <p style="margin:0 0 16px;color:#94A3B8;font-size:13px;line-height:1.6;">
+          Our recruitment and engineering panel will review your completed assessment. If your profile matches current openings, an ASHVANCE TECH hiring team member will reach out regarding next steps.
         </p>
-        <div style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.4);border-radius:12px;padding:16px 20px;margin-bottom:20px;">
-          <span style="color:#818cf8;font-size:16px;font-weight:700;">{status}</span>
-        </div>"""
-        html = _wrap_luxury_email("Application Status Update", f"Candidate: {name}", "#4338ca", "#8b5cf6", "ℹ️", body)
-        _send_email_async(email, f"Application Status: {status}", html)
+
+        <p style="margin:0;color:#E2E8F0;font-size:13px;line-height:1.6;">
+          Sincerely,<br/>
+          <strong>ASHVANCE TECH</strong><br/>
+          <span style="color:#64748B;font-size:12px;">Smart Interview AI Recruitment Operations</span>
+        </p>
+        """
+
+        html = _wrap_ashvance_email(
+            "Interview Completed & Assessment Report",
+            f"Candidate Assessment Results • {position}",
+            body
+        )
+        subject = "ASHVANCE TECH — Interview Completed & Assessment Report"
+        _send_email_async(email, subject, html, pdf_bytes, pdf_filename)
 
 
-# Singleton instance
 email_manager = EmailManager()

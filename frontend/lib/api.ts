@@ -21,6 +21,7 @@ export interface CandidateResponse {
     mobile: string;
     position?: string;
     status: string;
+    secure_token?: string;
     total_score?: number;
     is_verified?: boolean;
     created_at: string;
@@ -204,6 +205,76 @@ export async function clarifyQuestion(candidateId: number, currentQuestion: stri
 export async function finishInterview(candidateId: number): Promise<{ status: string; message: string }> {
     const response = await api.post(`/api/interviews/${candidateId}/finish`);
     return response.data;
+}
+
+// ── Secure Token API Methods for Public Interview Links ──────────────────────
+
+export interface CandidateTokenInfo {
+    valid: boolean;
+    candidate_id: number;
+    secure_token: string;
+    name: string;
+    email: string;
+    mobile: string;
+    position: string;
+    status: string;
+    is_verified: boolean;
+    current_stage: string;
+    is_completed: boolean;
+    created_at: string;
+}
+
+export async function getCandidateByToken(token: string): Promise<CandidateTokenInfo> {
+    const response = await api.get<CandidateTokenInfo>(`/api/candidates/token/${token}`);
+    return response.data;
+}
+
+export async function verifyOTPByToken(token: string, otpCode: string): Promise<{ verified: boolean; message: string; candidate_id?: number }> {
+    const response = await api.post(`/api/candidates/token/${token}/verify-otp`, { otp_code: otpCode });
+    return response.data;
+}
+
+export async function getQuestionsByToken(token: string): Promise<Question[]> {
+    const response = await api.get<Question[]>(`/api/interviews/token/${token}/questions`);
+    return response.data;
+}
+
+export async function submitAnswerByToken(
+    token: string,
+    questionOrder: number,
+    answer: string
+): Promise<EvaluationResponse> {
+    const response = await api.post<EvaluationResponse>(`/api/interviews/token/${token}/answer`, {
+        question_order: questionOrder,
+        answer,
+    });
+    return response.data;
+}
+
+export async function clarifyQuestionByToken(
+    token: string,
+    currentQuestion: string,
+    userQuery: string
+): Promise<{ ai_response: string }> {
+    const response = await api.post<{ ai_response: string }>(`/api/interviews/token/${token}/clarify`, {
+        current_question: currentQuestion,
+        user_query: userQuery,
+    });
+    return response.data;
+}
+
+export async function finishInterviewByToken(token: string): Promise<{ status: string; message: string }> {
+    const response = await api.post(`/api/interviews/token/${token}/finish`);
+    return response.data;
+}
+
+export async function getReportByToken(token: string): Promise<Report> {
+    const response = await api.get<Report>(`/api/reports/token/${token}`);
+    return response.data;
+}
+
+export function getPdfUrlByToken(token: string): string {
+    return `${API_BASE}/api/reports/token/${token}/pdf`;
 }
 
 export default api;
