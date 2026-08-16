@@ -1,17 +1,11 @@
 """
-Email Service — uses Python stdlib smtplib with inline HTML.
-No template files or fastapi_mail required.
-
-Emails are sent to:
-  • The CANDIDATE (if they provided an email) for status updates.
-  • The INTERVIEWER (INTERVIEWER_EMAIL in .env) for every key event:
-      – Interview Started
-      – Interview Completed
-      – Interview Abandoned / Incomplete
+Email Service — Uses Python stdlib smtplib with luxury, responsive HTML emails.
+Thread-safe and asynchronous execution via asyncio.to_thread to prevent event loop blocking.
 """
 
 import logging
 import smtplib
+import asyncio
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional, Dict, Any
@@ -21,19 +15,16 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────── helpers ──────────────────────────────────────────
-
 def _is_email_configured() -> bool:
     """Return True only if real SMTP credentials have been set."""
-    placeholder_keywords = {"your_gmail", "your_16_char", "your_email", "example.com"}
+    placeholder_keywords = {"your_gmail", "your_16_char", "your_email", "example.com", "yourcompany.com"}
     username = settings.MAIL_USERNAME.lower()
     return bool(settings.MAIL_USERNAME) and not any(k in username for k in placeholder_keywords)
 
 
-def _send_email(to: str, subject: str, html_body: str) -> bool:
+def _send_email_sync(to: str, subject: str, html_body: str) -> bool:
     """
-    Send one HTML email via SMTP.
-    Returns True on success, False on failure (never raises).
+    Send one HTML email via SMTP synchronously (executed inside worker threads).
     """
     if not _is_email_configured():
         logger.info(f"Email skipped (SMTP not configured) — would have sent: {subject!r} → {to}")
@@ -42,7 +33,7 @@ def _send_email(to: str, subject: str, html_body: str) -> bool:
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = settings.MAIL_FROM
+        msg["From"] = f"AI Interview Bot <{settings.MAIL_FROM}>"
         msg["To"] = to
         msg.attach(MIMEText(html_body, "html"))
 
@@ -52,7 +43,7 @@ def _send_email(to: str, subject: str, html_body: str) -> bool:
             server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
             server.sendmail(settings.MAIL_FROM, [to], msg.as_string())
 
-        logger.info(f"✅ Email sent: {subject!r} → {to}")
+        logger.info(f"✅ Email sent successfully: {subject!r} → {to}")
         return True
 
     except Exception as exc:
@@ -60,197 +51,238 @@ def _send_email(to: str, subject: str, html_body: str) -> bool:
         return False
 
 
-# ─────────────────────────── HTML templates (inline) ──────────────────────────
-
-_BASE_STYLE = """
-body { margin:0; padding:0; background:#0a0a1a; font-family: 'Segoe UI', Arial, sans-serif; }
-.wrap { max-width:600px; margin:40px auto; background:#12122a; border:1px solid rgba(139,92,246,0.3);
-        border-radius:16px; overflow:hidden; }
-.header { background:linear-gradient(135deg,#4f46e5,#7c3aed); padding:32px 40px; }
-.header h1 { color:#fff; margin:0; font-size:22px; letter-spacing:-0.3px; }
-.header p { color:rgba(255,255,255,0.7); margin:6px 0 0; font-size:13px; }
-.body { padding:32px 40px; }
-.body p { color:#c4b5fd; font-size:15px; line-height:1.7; margin:0 0 16px; }
-.badge { display:inline-block; padding:6px 14px; border-radius:20px; font-size:13px; font-weight:600; margin-bottom:20px; }
-.badge.green { background:rgba(34,197,94,0.15); color:#4ade80; border:1px solid rgba(34,197,94,0.3); }
-.badge.blue  { background:rgba(99,102,241,0.15);  color:#818cf8; border:1px solid rgba(99,102,241,0.3); }
-.badge.red   { background:rgba(239,68,68,0.15);   color:#f87171; border:1px solid rgba(239,68,68,0.3); }
-.badge.amber { background:rgba(245,158,11,0.15);  color:#fbbf24; border:1px solid rgba(245,158,11,0.3); }
-.divider { border:none; border-top:1px solid rgba(255,255,255,0.07); margin:20px 0; }
-.info-row { display:flex; justify-content:space-between; padding:10px 0;
-             border-bottom:1px solid rgba(255,255,255,0.05); }
-.info-row .label { color:rgba(255,255,255,0.4); font-size:13px; }
-.info-row .value { color:#e2e8f0; font-size:13px; font-weight:600; }
-.score-box { background:rgba(99,102,241,0.1); border:1px solid rgba(99,102,241,0.25);
-              border-radius:12px; padding:16px 20px; margin:16px 0; text-align:center; }
-.score-box .num { font-size:42px; font-weight:800; color:#818cf8; line-height:1; }
-.score-box .sub { font-size:13px; color:rgba(255,255,255,0.4); margin-top:4px; }
-.footer { background:rgba(0,0,0,0.3); padding:16px 40px; text-align:center;
-           color:rgba(255,255,255,0.25); font-size:11px; }
-"""
+def _send_email_async(to: str, subject: str, html_body: str):
+    """Fire-and-forget non-blocking email task."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(asyncio.to_thread(_send_email_sync, to, subject, html_body))
+    except RuntimeError:
+        # If outside loop, execute via background thread
+        asyncio.run(asyncio.to_thread(_send_email_sync, to, subject, html_body))
 
 
-def _html_wrap(header_title: str, header_sub: str, body_inner: str) -> str:
-    return f"""<!DOCTYPE html><html><head><style>{_BASE_STYLE}</style></head><body>
-<div class="wrap">
-  <div class="header">
-    <h1>🤖 {header_title}</h1>
-    <p>{header_sub}</p>
-  </div>
-  <div class="body">{body_inner}</div>
-  <div class="footer">AI Interview Bot • Automated Notification • Do not reply</div>
-</div></body></html>"""
+# ─────────────────────────── Luxury Email Base Template ──────────────────────────
+
+def _wrap_luxury_email(header_title: str, header_subtitle: str, gradient_start: str, gradient_end: str, icon: str, body_html: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{header_title}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#070714;font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;color:#f8fafc;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#070714;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;border-radius:24px;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,0.7);border:1px solid rgba(99,102,241,0.25);background-color:#0f0f26;">
+          
+          <!-- HERO HEADER -->
+          <tr>
+            <td style="background:linear-gradient(135deg, {gradient_start} 0%, {gradient_end} 100%);padding:44px 40px;text-align:center;">
+              <div style="display:inline-block;width:64px;height:64px;line-height:64px;background:rgba(255,255,255,0.15);border-radius:18px;backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.3);font-size:32px;margin-bottom:14px;">
+                {icon}
+              </div>
+              <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:800;letter-spacing:-0.5px;">{header_title}</h1>
+              <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:14px;font-weight:500;">{header_subtitle}</p>
+            </td>
+          </tr>
+
+          <!-- BODY CONTENT -->
+          <tr>
+            <td style="padding:40px 44px;background-color:#0f0f26;">
+              {body_html}
+            </td>
+          </tr>
+
+          <!-- FOOTER -->
+          <tr>
+            <td style="background-color:#070714;padding:24px 40px;text-align:center;border-top:1px solid rgba(255,255,255,0.06);">
+              <p style="margin:0;color:#475569;font-size:12px;line-height:1.5;">
+                AI Interview Bot Platform • Automated Intelligent Notification<br>
+                Please do not reply directly to this email.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
 
 
 # ─────────────────────────── Email Manager ────────────────────────────────────
 
 class EmailManager:
 
-    # ── Candidate emails ───────────────────────────────────────────────────────
-
     def send_interview_started(self, email: str, name: str, position: str):
-        """Tell the candidate their interview has started."""
+        """Notify candidate that their interview is live."""
         body = f"""
-        <span class="badge blue">🎯 Interview Started</span>
-        <p>Hi <strong style="color:#e2e8f0">{name}</strong>,</p>
-        <p>Your AI-powered interview for the <strong style="color:#e2e8f0">{position}</strong>
-           position has officially begun. Answer each question clearly and confidently —
-           the AI interviewer will adapt to your responses in real time.</p>
-        <p><strong style="color:#a78bfa">Tips for a great interview:</strong></p>
-        <ul style="color:#c4b5fd;font-size:14px;line-height:2">
-          <li>Speak clearly and concisely</li>
-          <li>Give specific examples from your experience</li>
-          <li>It's OK to take a moment to think before answering</li>
-        </ul>
-        <p>Good luck! 🚀</p>"""
-        html = _html_wrap("AI Interview Bot", "Your Interview Has Started", body)
-        _send_email(email, f"✅ Interview Started — {position}", html)
+        <div style="display:inline-block;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:30px;padding:6px 16px;margin-bottom:20px;">
+          <span style="color:#818cf8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">🎯 Session Active</span>
+        </div>
+        <h2 style="margin:0 0 16px;color:#ffffff;font-size:22px;font-weight:700;">Welcome, {name}! 👋</h2>
+        <p style="margin:0 0 20px;color:#94a3b8;font-size:15px;line-height:1.7;">
+          Your AI-powered technical interview for the <strong style="color:#ffffff;">{position}</strong> position is officially in progress.
+        </p>
 
-    def send_interview_completed(self, email: str, name: str, position: str, overall_score: Optional[float] = None):
-        """Tell the candidate their interview is done and a report is ready."""
-        score_block = ""
+        <div style="background:linear-gradient(135deg, rgba(99,102,241,0.1) 0%, rgba(168,85,247,0.1) 100%);border:1px solid rgba(99,102,241,0.25);border-radius:16px;padding:20px;margin-bottom:28px;">
+          <p style="margin:0 0 6px;color:#c084fc;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Target Position</p>
+          <p style="margin:0;color:#ffffff;font-size:20px;font-weight:800;">{position}</p>
+        </div>
+
+        <h3 style="margin:0 0 14px;color:#ffffff;font-size:15px;font-weight:700;">💡 Key Guidelines:</h3>
+        <ul style="margin:0 0 28px;padding-left:20px;color:#cbd5e1;font-size:14px;line-height:1.8;">
+          <li>Speak clearly or type structured answers with specific real-world examples.</li>
+          <li>The AI interviewer adapts difficulty dynamically based on your responses.</li>
+          <li>Upon completion, you will instantly receive your detailed performance scorecard.</li>
+        </ul>
+
+        <p style="margin:0;color:#64748b;font-size:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
+          Candidate Portal ID: Verified Session
+        </p>"""
+        
+        html = _wrap_luxury_email(
+            "AI Interview Bot",
+            "Technical Assessment Started",
+            "#4338ca",
+            "#8b5cf6",
+            "🚀",
+            body
+        )
+        _send_email_async(email, f"🎯 Your AI Interview Has Begun — {position}", html)
+
+    def send_interview_completed(self, email: str, name: str, position: str, overall_score: Optional[float] = None, recommendation: Optional[str] = None):
+        """Notify candidate of interview completion with scorecard."""
+        score_html = ""
         if overall_score is not None:
-            color = "#4ade80" if overall_score >= 70 else "#fbbf24" if overall_score >= 50 else "#f87171"
-            score_block = f"""
-            <div class="score-box">
-              <div class="num" style="color:{color}">{overall_score:.0f}</div>
-              <div class="sub">Overall Score / 100</div>
+            color = "#10b981" if overall_score >= 75 else "#f59e0b" if overall_score >= 50 else "#ef4444"
+            rec_text = recommendation or ("Strong Hire" if overall_score >= 80 else "Hire" if overall_score >= 60 else "Under Review")
+            score_html = f"""
+            <div style="background:linear-gradient(180deg, rgba(15,23,42,0.8) 0%, rgba(15,15,38,0.9) 100%);border:2px solid {color}55;border-radius:20px;padding:28px 20px;text-align:center;margin-bottom:28px;box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+              <p style="margin:0 0 8px;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Overall Performance Score</p>
+              <div style="font-size:56px;font-weight:900;color:{color};line-height:1;margin-bottom:8px;font-family:'Courier New',monospace;">
+                {overall_score:.0f}<span style="font-size:24px;color:#64748b;">/100</span>
+              </div>
+              <div style="display:inline-block;background:{color}22;border:1px solid {color}66;border-radius:20px;padding:6px 16px;">
+                <span style="color:{color};font-size:13px;font-weight:700;">Verdict: {rec_text}</span>
+              </div>
             </div>"""
 
         body = f"""
-        <span class="badge green">🎉 Interview Complete</span>
-        <p>Hi <strong style="color:#e2e8f0">{name}</strong>,</p>
-        <p>You have successfully completed your AI interview for
-           <strong style="color:#e2e8f0">{position}</strong>.
-           A detailed report with your scores, feedback, and improvement suggestions
-           has been generated.</p>
-        {score_block}
-        <p>The hiring team will review your results and get back to you shortly.
-           Thank you for your time!</p>"""
-        html = _html_wrap("Interview Complete 🎉", "Thank you for completing your interview", body)
-        _send_email(email, f"🎉 Interview Complete — {position}", html)
+        <div style="display:inline-block;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);border-radius:30px;padding:6px 16px;margin-bottom:20px;">
+          <span style="color:#34d399;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">🎉 Completed Successfully</span>
+        </div>
+        <h2 style="margin:0 0 12px;color:#ffffff;font-size:22px;font-weight:700;">Congratulations, {name}! 🌟</h2>
+        <p style="margin:0 0 24px;color:#94a3b8;font-size:15px;line-height:1.7;">
+          You have completed all stages of the <strong style="color:#ffffff;">{position}</strong> evaluation. The AI has synthesized your responses and generated an in-depth scorecard.
+        </p>
 
-    def send_interview_incomplete(self, email: str, name: str, position: str):
-        """Remind a candidate they left their interview unfinished."""
-        body = f"""
-        <span class="badge amber">⚠️ Interview Incomplete</span>
-        <p>Hi <strong style="color:#e2e8f0">{name}</strong>,</p>
-        <p>It looks like your interview for <strong style="color:#e2e8f0">{position}</strong>
-           was not fully completed. Your progress has been saved.</p>
-        <p>Please return to the interview portal to finish — incomplete interviews
-           may not be considered for the position.</p>
-        <p style="color:rgba(255,255,255,0.4);font-size:13px">
-           If you experienced a technical issue, please contact the HR team.</p>"""
-        html = _html_wrap("Interview Reminder", "Your interview is not yet complete", body)
-        _send_email(email, f"⚠️ Please Complete Your Interview — {position}", html)
+        {score_html}
 
-    # ── Interviewer / HR alert emails ──────────────────────────────────────────
+        <p style="margin:0 0 16px;color:#cbd5e1;font-size:14px;line-height:1.7;">
+          Your full analytics report with detailed strengths, growth areas, and hiring notes has been archived in the recruiter dashboard.
+        </p>
+
+        <p style="margin:0;color:#64748b;font-size:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
+          Thank you for interviewing with AI Interview Bot. The recruitment team will reach out with next steps.
+        </p>"""
+
+        html = _wrap_luxury_email(
+            "Interview Results",
+            f"Candidate Performance Summary • {position}",
+            "#059669",
+            "#10b981",
+            "🏆",
+            body
+        )
+        _send_email_async(email, f"🏆 Interview Scorecard & Feedback — {name}", html)
 
     def send_interviewer_alert(
         self,
-        event: str,                # "STARTED" | "COMPLETED" | "INCOMPLETE"
+        event: str,
         candidate_name: str,
         candidate_email: str,
         position: str,
         extra: Optional[Dict[str, Any]] = None,
     ):
-        """
-        Send a real-time alert to the INTERVIEWER_EMAIL address configured in .env.
-        `extra` can contain keys like 'overall_score', 'recommendation', 'q_count'.
-        """
+        """Send a real-time HR alert to the INTERVIEWER_EMAIL address."""
         interviewer_email = settings.INTERVIEWER_EMAIL
-        if not interviewer_email or "@" not in interviewer_email:
+        if not interviewer_email or "@" not in interviewer_email or "your" in interviewer_email.lower():
             logger.debug("No INTERVIEWER_EMAIL configured — skipping HR alert.")
-            return
-        if "your" in interviewer_email.lower() or "example" in interviewer_email.lower():
-            logger.debug("INTERVIEWER_EMAIL is placeholder — skipping HR alert.")
             return
 
         extra = extra or {}
+        score = extra.get("overall_score")
+        rec = extra.get("recommendation", "Evaluation in progress")
 
         if event == "STARTED":
-            badge_class, badge_text = "blue", "🎯 Interview Started"
-            subject = f"[Alert] {candidate_name} started their interview"
-            event_body = f"""
-            <p>A candidate has <strong style="color:#818cf8">started</strong> their interview.</p>"""
-
+            header_title = "HR Alert: Interview Started"
+            header_sub = f"Candidate: {candidate_name}"
+            grad_start, grad_end = "#4338ca", "#6366f1"
+            icon = "🔔"
+            status_badge = '<span style="color:#818cf8;font-weight:700;">🔵 Interview Commenced</span>'
+            subject = f"🔔 [Recruiter Alert] {candidate_name} started interview for {position}"
         elif event == "COMPLETED":
-            score = extra.get("overall_score")
-            rec = extra.get("recommendation", "—")
-            badge_class, badge_text = "green", "✅ Interview Completed"
-            subject = f"[Alert] {candidate_name} completed their interview"
-            score_block = ""
-            if score is not None:
-                score_block = f"""<div class="score-box">
-                  <div class="num">{score:.0f}</div>
-                  <div class="sub">Overall Score / 100</div></div>"""
-            event_body = f"""
-            <p>A candidate has <strong style="color:#4ade80">completed</strong> their interview.</p>
-            {score_block}
-            <div class="info-row"><span class="label">Recommendation</span>
-            <span class="value" style="color:#4ade80">{rec}</span></div>"""
-
-        elif event == "INCOMPLETE":
-            q_count = extra.get("q_count", "?")
-            badge_class, badge_text = "amber", "⚠️ Interview Abandoned"
-            subject = f"[Alert] {candidate_name} did not finish their interview"
-            event_body = f"""
-            <p>A candidate <strong style="color:#fbbf24">did not complete</strong> their interview
-               (answered {q_count} question(s)).</p>"""
-
+            header_title = "HR Alert: Interview Finished"
+            header_sub = f"Score: {score:.0f}/100 • {candidate_name}" if score is not None else candidate_name
+            grad_start, grad_end = "#059669", "#10b981"
+            icon = "📋"
+            status_badge = '<span style="color:#34d399;font-weight:700;">🟢 Completed & Graded</span>'
+            subject = f"📋 [Recruiter Alert] {candidate_name} completed interview ({rec})"
         else:
-            badge_class, badge_text = "blue", event
-            subject = f"[Alert] Interview event: {event} — {candidate_name}"
-            event_body = f"<p>Interview event: {event}</p>"
+            header_title = f"HR Alert: {event}"
+            header_sub = candidate_name
+            grad_start, grad_end = "#d97706", "#f59e0b"
+            icon = "⚠️"
+            status_badge = f'<span style="color:#fbbf24;font-weight:700;">⚠️ {event}</span>'
+            subject = f"⚠️ [Recruiter Alert] {candidate_name} - {event}"
 
         body = f"""
-        <span class="badge {badge_class}">{badge_text}</span>
-        {event_body}
-        <hr class="divider">
-        <div class="info-row"><span class="label">Candidate</span><span class="value">{candidate_name}</span></div>
-        <div class="info-row"><span class="label">Position</span><span class="value">{position}</span></div>
-        <div class="info-row"><span class="label">Email</span><span class="value">{candidate_email or 'Not provided'}</span></div>
-        <hr class="divider">
-        <p style="font-size:13px;color:rgba(255,255,255,0.4)">
-          Log into the admin portal to view the full interview transcript and report.</p>"""
+        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:24px;margin-bottom:24px;">
+          <table width="100%" cellpadding="6" cellspacing="0">
+            <tr>
+              <td style="color:#94a3b8;font-size:13px;width:35%;">Status:</td>
+              <td style="font-size:13px;">{status_badge}</td>
+            </tr>
+            <tr>
+              <td style="color:#94a3b8;font-size:13px;">Candidate:</td>
+              <td style="color:#ffffff;font-size:14px;font-weight:700;">{candidate_name}</td>
+            </tr>
+            <tr>
+              <td style="color:#94a3b8;font-size:13px;">Position:</td>
+              <td style="color:#c084fc;font-size:14px;font-weight:600;">{position}</td>
+            </tr>
+            <tr>
+              <td style="color:#94a3b8;font-size:13px;">Email:</td>
+              <td style="color:#e2e8f0;font-size:13px;">{candidate_email or 'None'}</td>
+            </tr>
+            {f'<tr><td style="color:#94a3b8;font-size:13px;">Score:</td><td style="color:#34d399;font-size:16px;font-weight:800;">{score:.0f}/100</td></tr>' if score is not None else ''}
+            {f'<tr><td style="color:#94a3b8;font-size:13px;">Recommendation:</td><td style="color:#ffffff;font-size:14px;font-weight:700;">{rec}</td></tr>' if rec else ''}
+          </table>
+        </div>
 
-        html = _html_wrap("HR / Interviewer Alert", f"Candidate: {candidate_name} • {position}", body)
-        _send_email(interviewer_email, subject, html)
+        <p style="margin:0;color:#64748b;font-size:12px;">
+          Access the backend dashboard to view complete audio transcripts, code snippets, and PDF summary.
+        </p>"""
 
-    # ── Legacy compatibility shim ─────────────────────────────────────────────
+        html = _wrap_luxury_email(header_title, header_sub, grad_start, grad_end, icon, body)
+        _send_email_async(interviewer_email, subject, html)
+
     async def send_status_update(self, email: str, name: str, status: str):
-        """Legacy async wrapper kept for backward compatibility."""
-        import asyncio
-        await asyncio.to_thread(self._send_status_sync, email, name, status)
-
-    def _send_status_sync(self, email: str, name: str, status: str):
+        """Asynchronous status notification."""
         body = f"""
-        <p>Hi <strong style="color:#e2e8f0">{name}</strong>,</p>
-        <p>Your interview status has been updated to:
-           <strong style="color:#818cf8">{status}</strong></p>"""
-        html = _html_wrap("Status Update", f"Interview status: {status}", body)
-        _send_email(email, f"Interview Status: {status}", html)
+        <h2 style="margin:0 0 16px;color:#ffffff;font-size:20px;font-weight:700;">Hello {name},</h2>
+        <p style="margin:0 0 20px;color:#94a3b8;font-size:15px;line-height:1.7;">
+          Your application & interview status has been updated to:
+        </p>
+        <div style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.4);border-radius:12px;padding:16px 20px;margin-bottom:20px;">
+          <span style="color:#818cf8;font-size:16px;font-weight:700;">{status}</span>
+        </div>"""
+        html = _wrap_luxury_email("Application Status Update", f"Candidate: {name}", "#4338ca", "#8b5cf6", "ℹ️", body)
+        _send_email_async(email, f"Application Status: {status}", html)
 
 
-# Singleton
+# Singleton instance
 email_manager = EmailManager()

@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_FROM_NUMBER: str = ""
 
+    # ── TTS (Text-to-Speech) ───────────────────────────────────────────────────
+    TTS_LANGUAGE: str = "en"
+    TTS_TLD: str = "co.uk"       # British English — sweeter, more professional female voice
+    TTS_SLOW: bool = False
+
+    # ── WebSocket ──────────────────────────────────────────────────────────────
+    WS_HEARTBEAT_INTERVAL: int = 30  # seconds
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

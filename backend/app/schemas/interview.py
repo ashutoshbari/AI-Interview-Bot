@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List, Any
 from datetime import datetime
 
 
@@ -30,6 +30,52 @@ class EvaluationResponse(BaseModel):
 class TranscriptionResponse(BaseModel):
     text: str
 
+
+class ClarifyRequest(BaseModel):
+    current_question: str
+    user_query: str = Field(..., min_length=1)
+
+
+class ClarifyResponse(BaseModel):
+    ai_response: str
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+
+
+# ── Suggestions / Coaching Report ─────────────────────────────────────────────
+
+class StrengthItem(BaseModel):
+    title: str
+    detail: str
+
+
+class GrowthArea(BaseModel):
+    title: str
+    detail: str
+
+
+class RoadmapItem(BaseModel):
+    week: str
+    focus: str
+    action: str
+    resource: str
+
+
+class SuggestionsResponse(BaseModel):
+    overall_score: float
+    verdict: str  # "Strong Hire" | "Hire" | "Needs Improvement" | "No Hire"
+    verdict_reason: str
+    top_strengths: List[Any] = []
+    growth_areas: List[Any] = []
+    quick_wins: List[str] = []
+    coaching_roadmap: List[Any] = []
+    interview_style_tips: List[str] = []
+    encouragement: str = ""
+
+
+# ── Interview Records ─────────────────────────────────────────────────────────
 
 class InterviewRecord(BaseModel):
     id: int

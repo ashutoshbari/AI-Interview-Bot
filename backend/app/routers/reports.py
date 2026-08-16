@@ -44,8 +44,24 @@ async def get_report(
     if not records:
         raise HTTPException(status_code=404, detail="No interview data found for this candidate.")
 
-    unanswered = [r for r in records if r.answer is None]
-    if len(unanswered) == len(records):
+    answered = [r for r in records if r.answer]
+
+    # Allow report generation if: interview is COMPLETED, OR at least 1 question was answered
+    if not answered:
+        if candidate.status == "COMPLETED":
+            # Interview was force-finished with no answers — return a minimal report
+            return {
+                "overall_score": 0,
+                "technical_score": 0,
+                "problem_solving_score": 0,
+                "communication_score": 0,
+                "strengths": [],
+                "weaknesses": [{"title": "No Answers Recorded", "detail": "The interview was submitted without any answered questions."}],
+                "improvement_plan": ["Complete at least one full interview session", "Practice answering mock questions aloud"],
+                "upskilling_plan": [{"topic": "Interview Preparation", "resource": "LeetCode + System Design Primer", "priority": "High"}],
+                "recommendation": "Needs Improvement",
+                "summary": f"{candidate.name} submitted the interview form but did not answer any questions."
+            }
         raise HTTPException(status_code=400, detail="Interview has not been started yet.")
 
     records_dicts = [

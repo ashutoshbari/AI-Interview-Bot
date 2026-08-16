@@ -18,3 +18,5 @@ aiosqlite==0.20.0
 tenacity==9.0.0
 fastapi-mail==1.4.1
 jinja2==3.1.5
+gTTS==2.5.3
+websockets==13.1
