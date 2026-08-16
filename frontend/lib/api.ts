@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://ai-interview-bot-api.loca.lt';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 export interface TranscriptionResponse {
     text: string;
