@@ -37,48 +37,60 @@ async def register_candidate(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Register a candidate with high-verbosity logging and strict validation.
+    Register a candidate with fast response and async resume summarization.
+
+    PERFORMANCE FIX: Resume summarization (AI call, 3-8s) now runs in the background
+    after returning the candidate record. The registration POST returns immediately.
     """
+    import re as _re
     logger.info("--- Registration Attempt Started ---")
     logger.info(f"Fields received: name='{name}', mobile='{mobile}', position='{position}'")
-    
+
     try:
         # 1. Validate name
         name = name.strip()
         if len(name) < 2:
-            logger.warning(f"Registration failed: Name too short ('{name}')")
             raise HTTPException(status_code=400, detail="Name must be at least 2 characters long.")
 
-        # 2. Validate mobile (numeric check)
-        mobile_digits = "".join(filter(str.isdigit, mobile))
-        if len(mobile_digits) < 10:
-            logger.warning(f"Registration failed: Invalid mobile ('{mobile}')")
-            raise HTTPException(status_code=400, detail="Mobile number must contain at least 10 digits.")
+        # 2. Validate Indian mobile number
+        # Accept: +91XXXXXXXXXX, 91XXXXXXXXXX, or plain 10-digit starting with 6-9
+        mobile_clean = mobile.strip().replace(" ", "").replace("-", "")
+        mobile_digits = _re.sub(r'^(\+91|91)', '', mobile_clean)  # strip country code
+        mobile_digits = "".join(filter(str.isdigit, mobile_digits))
+
+        if len(mobile_digits) != 10 or mobile_digits[0] not in "6789":
+            logger.warning(f"Registration failed: Invalid Indian mobile ('{mobile}')")
+            raise HTTPException(
+                status_code=400,
+                detail="Please enter a valid Indian mobile number (10 digits, starting with 6-9)."
+            )
+        # Normalize to +91 format
+        normalized_mobile = f"+91{mobile_digits}"
+        logger.info(f"Mobile normalized: {normalized_mobile}")
 
         # 3. Validate resume file
         if not resume or not resume.filename:
-            logger.warning("Registration failed: No resume file provided")
             raise HTTPException(status_code=400, detail="Resume file is required.")
 
         filename = resume.filename
         ext = Path(filename).suffix.lower()
-        logger.info(f"File received: {filename} (extension: {ext}, type: {resume.content_type})")
+        logger.info(f"File received: {filename} (extension: {ext})")
 
         if ext not in ALLOWED_EXTENSIONS:
-            logger.warning(f"Registration failed: Unsupported extension '{ext}'")
-            raise HTTPException(status_code=400, detail=f"Unsupported file type '{ext}'. Please upload PDF, DOC, or DOCX.")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type '{ext}'. Please upload PDF, DOC, or DOCX."
+            )
 
-        # Read content to check size
         content = await resume.read()
         file_size_mb = len(content) / (1024 * 1024)
-        logger.info(f"File size: {file_size_mb:.2f} MB")
 
         if file_size_mb > settings.MAX_FILE_SIZE_MB:
-            logger.warning(f"Registration failed: File too large ({file_size_mb:.2f} MB)")
-            raise HTTPException(status_code=400, detail=f"File is too large ({file_size_mb:.2f}MB). Max limit is {settings.MAX_FILE_SIZE_MB}MB.")
-
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large ({file_size_mb:.2f}MB). Max {settings.MAX_FILE_SIZE_MB}MB."
+            )
         if len(content) == 0:
-            logger.warning("Registration failed: File is empty")
             raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
         # 4. Save file
@@ -89,63 +101,66 @@ async def register_candidate(
                 await f.write(content)
             logger.info(f"File saved to: {file_path}")
         except Exception as e:
-            logger.error(f"File System Error: Failed to save file: {e}", exc_info=True)
+            logger.error(f"File save error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Server error: Could not save the uploaded file.")
 
-        # 5. Extract text
+        # 5. Extract text from resume (fast — local PDF/DOCX parsing)
         try:
             from fastapi.concurrency import run_in_threadpool
-            logger.info("Starting text extraction from resume...")
             resume_text = await run_in_threadpool(extract_resume_text, str(file_path))
-            logger.info(f"Text extraction successful. Length: {len(resume_text)} chars")
+            logger.info(f"Text extracted: {len(resume_text)} chars")
         except ValueError as e:
-            logger.warning(f"Extraction Error: {e}")
             file_path.unlink(missing_ok=True)
             raise HTTPException(status_code=422, detail=str(e))
         except Exception as e:
-            logger.error(f"Unexpected Extraction Crash: {e}", exc_info=True)
+            logger.error(f"Text extraction error: {e}", exc_info=True)
             file_path.unlink(missing_ok=True)
-            raise HTTPException(status_code=500, detail="Failed to process resume content due to a server error.")
+            raise HTTPException(status_code=500, detail="Failed to process resume content.")
 
-        # 6. Create DB Record (Initial)
+        # 6. Save candidate to DB immediately — no AI call yet (PERFORMANCE FIX)
         try:
-            from app.services.summarizer import summarize_resume
-            import json
-            
-            logger.info("Generating candidate resume summary...")
-            summary_data = await summarize_resume(resume_text)
-            summary_json = json.dumps(summary_data)
-            
             candidate = Candidate(
                 name=name,
-                mobile=mobile_digits,
+                mobile=normalized_mobile,
                 email=email,
                 position=position.strip() or "Software Engineer",
                 resume_path=str(file_path),
                 resume_text=resume_text,
-                resume_summary=summary_json,
+                resume_summary=None,   # Will be filled by background task
                 status="NOT_STARTED",
-                last_ai_error=summary_data.get("error") if "error" in summary_data else None
             )
             db.add(candidate)
             await db.commit()
             await db.refresh(candidate)
-
-            # 7. Automated Email: Status Update
-            if candidate.email:
-                background_tasks.add_task(
-                    email_manager.send_status_update,
-                    email=candidate.email,
-                    name=candidate.name,
-                    status="Interview Ready (NOT_STARTED)"
-                )
-
-            logger.info(f"DB Record Created: ID {candidate.id} for {candidate.name}")
-            return candidate
+            logger.info(f"✅ DB Record Created: ID={candidate.id} Name={candidate.name}")
         except Exception as e:
-            logger.error(f"Database/AI Error during registration: {e}", exc_info=True)
+            logger.error(f"DB error during registration: {e}", exc_info=True)
             file_path.unlink(missing_ok=True)
-            raise HTTPException(status_code=500, detail="Server error: Registration processing failed.")
+            raise HTTPException(status_code=500, detail="Server error: Registration DB save failed.")
+
+        # 7. Background: Summarize resume with AI (3-8s — does NOT block response)
+        async def _summarize_in_background(candidate_id: int, text: str):
+            """Run resume summarization after returning response to client."""
+            try:
+                from app.services.summarizer import summarize_resume
+                import json as _json
+                from app.database import AsyncSessionLocal
+                logger.info(f"[BG] Starting resume summarization for candidate {candidate_id}")
+                summary_data = await summarize_resume(text)
+                summary_json = _json.dumps(summary_data)
+                async with AsyncSessionLocal() as bg_db:
+                    bg_result = await bg_db.execute(select(Candidate).where(Candidate.id == candidate_id))
+                    bg_candidate = bg_result.scalar_one_or_none()
+                    if bg_candidate:
+                        bg_candidate.resume_summary = summary_json
+                        await bg_db.commit()
+                        logger.info(f"[BG] ✅ Resume summary saved for candidate {candidate_id}")
+            except Exception as exc:
+                logger.error(f"[BG] Resume summarization failed for {candidate_id}: {exc}")
+
+        background_tasks.add_task(_summarize_in_background, candidate.id, resume_text)
+
+        return candidate
 
     except HTTPException:
         raise

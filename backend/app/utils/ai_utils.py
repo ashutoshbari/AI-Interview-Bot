@@ -63,16 +63,40 @@ class MockProvider:
         # evaluator.py system: "You are a senior technical interviewer…"
         # evaluator.py user:   contains "Candidate Answer:"
         elif "candidate answer:" in combined or "evaluate" in combined:
+            # Estimate quality from answer length and keyword richness
+            answer_section = user_prompt[user_prompt.lower().find("candidate answer:"):]
+            answer_len = len(answer_section)
+            import random, hashlib
+            # Deterministic variation based on answer content hash
+            seed = int(hashlib.md5(answer_section[:200].encode()).hexdigest(), 16) % 1000
+            rng  = random.Random(seed)
+
+            base_tech  = rng.uniform(5.5, 9.2)
+            base_clar  = rng.uniform(5.8, 9.0)
+            base_depth = rng.uniform(5.0, 8.8)
+            base_comm  = rng.uniform(6.0, 9.3)
+
+            # Boost scores for longer, detailed answers
+            length_bonus = min(1.0, answer_len / 800)
+            tech_s  = min(10.0, round(base_tech  + length_bonus * 0.8, 1))
+            clar_s  = min(10.0, round(base_clar  + length_bonus * 0.5, 1))
+            dep_s   = min(10.0, round(base_depth + length_bonus * 1.0, 1))
+            comm_s  = min(10.0, round(base_comm  + length_bonus * 0.3, 1))
+
+            feedback_opts = [
+                "Solid answer with good structure. Consider adding more concrete examples from your past work.",
+                "Good technical depth shown. Try to be more concise and lead with the key insight first.",
+                "Clear communication style. Strengthening the architectural reasoning would elevate your response.",
+                "Strong answer overall. Adding metrics or quantifiable outcomes would make it more compelling.",
+                "Good breadth of knowledge demonstrated. Focus more on the 'why' behind your decisions.",
+            ]
             parsed = {
-                "technical_score": 7.5,
-                "clarity_score": 8.0,
-                "depth_score": 7.0,
-                "communication_score": 8.5,
-                "feedback": (
-                    "Good answer with clear communication. "
-                    "Consider providing more concrete examples to strengthen your response."
-                ),
-                "is_follow_up_needed": False,
+                "technical_score":     tech_s,
+                "clarity_score":       clar_s,
+                "depth_score":         dep_s,
+                "communication_score": comm_s,
+                "feedback":            feedback_opts[seed % len(feedback_opts)],
+                "is_follow_up_needed": bool(rng.random() > 0.6),
                 "suggested_follow_up": None
             }
 

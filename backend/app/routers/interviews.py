@@ -323,8 +323,9 @@ async def submit_answer(
 
     is_complete = next_q_data.get("is_interview_complete", False)
 
-    # If we hit the max question count, force completion
-    if len(history) >= 15:
+    # If we hit the configured max question count, force completion
+    max_qs = getattr(settings, "QUESTIONS_PER_INTERVIEW", 12)
+    if len([h for h in history if h.answer]) >= max_qs:
         is_complete = True
 
     next_q = None

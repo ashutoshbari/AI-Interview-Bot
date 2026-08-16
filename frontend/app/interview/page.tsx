@@ -2,977 +2,874 @@
 
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { 
-  getQuestions, 
-  submitAnswer, 
-  transcribeAudio, 
-  recordWarning, 
-  clarifyQuestion, 
+import {
+  getQuestions,
+  submitAnswer,
+  transcribeAudio,
+  recordWarning,
+  clarifyQuestion,
   finishInterview,
-  Question, 
-  EvaluationResponse 
+  Question,
+  EvaluationResponse
 } from '@/lib/api';
 import LoadingState from '@/components/LoadingState';
 
-const TYPE_LABELS: Record<string, { label: string; color: string; badgeBg: string }> = {
-  technical: { label: 'Technical Depth', color: 'text-cyan-300', badgeBg: 'bg-cyan-500/15 border-cyan-500/30' },
-  project: { label: 'Project Architecture', color: 'text-purple-300', badgeBg: 'bg-purple-500/15 border-purple-500/30' },
-  behavioral: { label: 'Situational & Soft Skills', color: 'text-amber-300', badgeBg: 'bg-amber-500/15 border-amber-500/30' },
-  logical: { label: 'Problem Solving', color: 'text-emerald-300', badgeBg: 'bg-emerald-500/15 border-emerald-500/30' },
-  general: { label: 'Introduction & Background', color: 'text-indigo-300', badgeBg: 'bg-indigo-500/15 border-indigo-500/30' },
+// ── Stage display map ─────────────────────────────────────────────────────────
+const STAGE_META: Record<string, { label: string; icon: string; color: string }> = {
+  greeting:   { label: 'Greeting',          icon: '👋', color: 'text-indigo-300' },
+  background: { label: 'Background',        icon: '📋', color: 'text-blue-300' },
+  project:    { label: 'Project Deep Dive', icon: '🏗️', color: 'text-purple-300' },
+  technical:  { label: 'Technical Skills',  icon: '⚙️', color: 'text-cyan-300' },
+  behavioral: { label: 'Behavioral',        icon: '🤝', color: 'text-amber-300' },
+  closing:    { label: 'Closing',           icon: '🎯', color: 'text-emerald-300' },
+  general:    { label: 'General',           icon: '💡', color: 'text-white/60' },
 };
 
-const TIMER_SECONDS = 90;
+const STAGE_ORDER = ['greeting', 'background', 'project', 'technical', 'behavioral', 'closing'];
+
+// ── AI state type ─────────────────────────────────────────────────────────────
+type AIState = 'ready' | 'speaking' | 'listening' | 'thinking' | 'processing';
+
+const RESPONSE_SECONDS = 60;
+
+// ── Silence detection config ──────────────────────────────────────────────────
+const SILENCE_TIMEOUT_MS = 2500;  // 2.5s of silence → auto-submit
+const MIN_SPEECH_LENGTH  = 15;    // Minimum chars before silence triggers submit
 
 function InterviewContent() {
   const router = useRouter();
   const params = useSearchParams();
-  const candidateId = Number(params.get('candidateId'));
-  const candidateName = decodeURIComponent(params.get('name') || 'Candidate');
+  const candidateId    = Number(params.get('candidateId'));
+  const candidateName  = decodeURIComponent(params.get('name') || 'Candidate');
   const totalQuestions = Number(params.get('total') || 12);
 
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [answer, setAnswer] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [evaluation, setEvaluation] = useState<EvaluationResponse | null>(null);
-  const [showFeedback, setShowFeedback] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(TIMER_SECONDS);
-  const [timerActive, setTimerActive] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  // ── Core state ───────────────────────────────────────────────────────────────
+  const [question, setQuestion]         = useState<Question | null>(null);
+  const [questionNum, setQuestionNum]   = useState(1);
+  const [answer, setAnswer]             = useState('');
+  const [aiState, setAiState]           = useState<AIState>('ready');
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState('');
+  const [isComplete, setIsComplete]     = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
-  
-  // Voice & Audio States
-  const [isVoiceMode, setIsVoiceMode] = useState(true);
-  const [autoSpeakEnabled, setAutoSpeakEnabled] = useState(false); // Only speaks when clicked or if auto-speak is enabled
-  const [isListening, setIsListening] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const [micError, setMicError] = useState('');
-  const [cheatWarning, setCheatWarning] = useState('');
-  const [autoAdvanceCount, setAutoAdvanceCount] = useState<number | null>(null);
 
-  // Two-Way Interactive Dialogue (Ask AI) States
+  // ── Timer state ───────────────────────────────────────────────────────────────
+  const [timeLeft, setTimeLeft]           = useState(RESPONSE_SECONDS);
+  const [timerActive, setTimerActive]     = useState(false);
+  const [silencePromptShown, setSilencePromptShown] = useState(false);
+
+  // ── Voice state ───────────────────────────────────────────────────────────────
+  const [isVoiceMode, setIsVoiceMode]     = useState(true);
+  const [isMuted, setIsMuted]             = useState(false);
+  const [micPermission, setMicPermission] = useState<'unknown' | 'granted' | 'denied'>('unknown');
+  const [micError, setMicError]           = useState('');
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [isListening, setIsListening]     = useState(false);
+
+  // ── UI state ──────────────────────────────────────────────────────────────────
   const [showClarifyModal, setShowClarifyModal] = useState(false);
-  const [clarifyQuery, setClarifyQuery] = useState('');
+  const [clarifyQuery, setClarifyQuery]   = useState('');
   const [clarifyResponse, setClarifyResponse] = useState('');
-  const [isClarifying, setIsClarifying] = useState(false);
+  const [isClarifying, setIsClarifying]   = useState(false);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
+  const [completedStages, setCompletedStages] = useState<string[]>([]);
+  const [currentStage, setCurrentStage]   = useState('greeting');
+  const [cheatWarning, setCheatWarning]   = useState('');
+  const [orbWave, setOrbWave]             = useState(0);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const recognitionRef = useRef<any>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const autoAdvanceRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ── Refs ──────────────────────────────────────────────────────────────────────
+  const recognitionRef       = useRef<any>(null);
+  const timerRef             = useRef<ReturnType<typeof setInterval> | null>(null);
+  const silenceTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isProcessingRef      = useRef(false);   // Guard against duplicate submissions
+  const isFetchingRef        = useRef(false);   // Guard against duplicate fetches
+  const lastSpeechTimeRef    = useRef<number>(0);
+  const answerRef            = useRef('');       // For closure-safe access in timers
+  const currentQuestionRef   = useRef<Question | null>(null);
+  const orbAnimRef           = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const getGreeting = () => {
-    const h = new Date().getHours();
-    if (h < 12) return 'Good Morning';
-    if (h < 17) return 'Good Afternoon';
-    return 'Good Evening';
-  };
+  // Keep refs in sync with state
+  useEffect(() => { answerRef.current = answer; }, [answer]);
+  useEffect(() => { currentQuestionRef.current = question; }, [question]);
 
-  // Sweet Female Text-To-Speech (TTS) Engine
+  // ── Orb animation ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    orbAnimRef.current = setInterval(() => {
+      setOrbWave(prev => (prev + 1) % 360);
+    }, 50);
+    return () => { if (orbAnimRef.current) clearInterval(orbAnimRef.current); };
+  }, []);
+
+  // ── TTS — speak using browser speech synthesis ───────────────────────────────
   const speak = useCallback((text: string, onEnd?: () => void) => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    if (typeof window === 'undefined' || !window.speechSynthesis || isMuted) {
+      if (onEnd) onEnd();
+      return;
+    }
 
     window.speechSynthesis.cancel();
+    setAiState('speaking');
 
     setTimeout(() => {
       const utterance = new SpeechSynthesisUtterance(text);
       const voices = window.speechSynthesis.getVoices();
-      
-      // Select the sweetest female voice available on the platform
-      if (voices.length > 0) {
-        const sweetFemaleVoice = voices.find(v => 
-          (v.name.includes('Zira') || v.name.includes('Google US English') || v.name.includes('Samantha') || 
-           v.name.includes('Victoria') || v.name.includes('Karen') || v.name.includes('Natural') || 
-           v.name.includes('Female') || v.name.includes('Jenny') || v.name.includes('Aria')) &&
-          (v.lang.startsWith('en'))
-        ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
 
-        utterance.voice = sweetFemaleVoice;
-      }
+      const femaleVoice = voices.find(v =>
+        (v.name.includes('Zira') || v.name.includes('Samantha') ||
+         v.name.includes('Victoria') || v.name.includes('Karen') ||
+         v.name.includes('Google US English') || v.name.includes('Jenny') ||
+         v.name.includes('Aria') || (v.name.includes('Female') && v.lang.startsWith('en')))
+      ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
 
-      // Warm, sweet, natural conversational cadence
-      utterance.pitch = 1.15; // Slightly higher pitch for a sweet female tone
-      utterance.rate = 0.93;  // Calm, articulate pacing
+      if (femaleVoice) utterance.voice = femaleVoice;
+      utterance.pitch = 1.1;
+      utterance.rate  = 0.92;
 
-      (window as any).currentUtterance = utterance;
-
-      utterance.onstart = () => setIsSpeaking(true);
       utterance.onend = () => {
-        setIsSpeaking(false);
+        setAiState('ready');
         if (onEnd) onEnd();
       };
       utterance.onerror = () => {
-        setIsSpeaking(false);
+        setAiState('ready');
+        if (onEnd) onEnd();
       };
 
       window.speechSynthesis.speak(utterance);
-    }, 80);
+    }, 100);
+  }, [isMuted]);
+
+  // Stop TTS (barge-in support)
+  const stopSpeaking = useCallback(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setAiState('ready');
+    }
   }, []);
 
-  // Real-time Fast Speech Recognition + MediaRecorder
-  const handleStartRecording = async () => {
-    setMicError('');
-    setError('');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data);
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        setAudioBlob(blob);
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorder.start();
-      setIsListening(true);
-      setAudioBlob(null);
-
-      // Instant 0ms Live Speech-to-Text Transcription via Web Speech API
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
-
-        recognition.onresult = (event: any) => {
-          let transcript = '';
-          for (let i = 0; i < event.results.length; i++) {
-            transcript += event.results[i][0].transcript + ' ';
-          }
-          setAnswer(transcript.trim());
-        };
-
-        recognition.onerror = (err: any) => {
-          console.warn('Speech recognition warning:', err);
-        };
-
-        recognition.start();
-        recognitionRef.current = recognition;
-      }
-
-    } catch (err) {
-      console.error('Mic error:', err);
-      setMicError('Could not access microphone. Please check permissions.');
-    }
-  };
-
-  const handleStopRecording = () => {
-    if (mediaRecorderRef.current && isListening) {
-      mediaRecorderRef.current.stop();
-      setIsListening(false);
-    }
+  // ── Microphone / Speech Recognition ─────────────────────────────────────────
+  const stopListening = useCallback(() => {
     if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {}
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
     }
-  };
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    setIsListening(false);
+  }, []);
 
-  const handleSubmitVoice = async () => {
-    // If text was captured via live speech recognition, submit immediately
-    if (answer.trim()) {
-      await processSubmission(answer.trim());
+  const startListening = useCallback(async () => {
+    if (isProcessingRef.current) return;
+
+    setMicError('');
+    setLiveTranscript('');
+    setAnswer('');
+    answerRef.current = '';
+    lastSpeechTimeRef.current = Date.now();
+
+    // Start response countdown timer
+    setTimeLeft(RESPONSE_SECONDS);
+    setTimerActive(true);
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setMicError('Voice recognition not supported in this browser. Please type your answer.');
+      setIsVoiceMode(false);
       return;
     }
 
-    if (!audioBlob) return;
-
-    setIsTranscribing(true);
-    setError('');
     try {
-      const { text } = await transcribeAudio(audioBlob);
-      setAnswer(text);
-      await processSubmission(text);
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Transcription failed. You can type your answer below.');
-    } finally {
-      setIsTranscribing(false);
-    }
-  };
-
-  // Fetch Questions
-  const fetchQ = useCallback(async (retryCount = 0) => {
-    if (!candidateId) { router.push('/'); return; }
-    setLoading(true);
-    setError('');
-    try {
-      const qs = await getQuestions(candidateId);
-      if (qs && qs.length > 0) {
-        setQuestions(qs);
+      // Request mic permission if not yet granted
+      if (micPermission !== 'granted') {
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        setMicPermission('granted');
       }
-    } catch (e: any) {
-      console.error(`Fetch question failed:`, e);
-      if (retryCount < 1) {
-        setTimeout(() => fetchQ(retryCount + 1), 1500);
-      } else {
-        const detail = e?.response?.data?.detail;
-        const msg = typeof detail === 'string' ? detail : JSON.stringify(detail);
-        setError(msg || 'AI service interruption. Please check your backend logs.');
+    } catch {
+      setMicPermission('denied');
+      setMicError('Microphone access denied. Please allow microphone and reload.');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous    = true;
+    recognition.interimResults = true;
+    recognition.lang           = 'en-IN';   // Indian English
+
+    recognition.onresult = (event: any) => {
+      let finalText = '';
+      let interimText = '';
+      for (let i = 0; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalText += event.results[i][0].transcript + ' ';
+        } else {
+          interimText += event.results[i][0].transcript;
+        }
       }
-    } finally {
-      setLoading(false);
+
+      const full = (finalText + interimText).trim();
+      setLiveTranscript(full);
+      setAnswer(full);
+      answerRef.current = full;
+
+      if (full.length > MIN_SPEECH_LENGTH) {
+        lastSpeechTimeRef.current = Date.now();
+        // Reset silence detection timer
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          // Auto-submit after silence
+          if (answerRef.current.trim().length > MIN_SPEECH_LENGTH && !isProcessingRef.current) {
+            stopListening();
+            handleAutoSubmit();
+          }
+        }, SILENCE_TIMEOUT_MS);
+      }
+    };
+
+    recognition.onerror = (err: any) => {
+      if (err.error === 'not-allowed') {
+        setMicPermission('denied');
+        setMicError('Microphone access denied. Please allow and reload.');
+      } else if (err.error !== 'no-speech') {
+        console.warn('Speech recognition error:', err.error);
+      }
+    };
+
+    recognition.onend = () => {
+      // Auto-restart if still in listening mode and not processing
+      if (isListening && !isProcessingRef.current) {
+        try { recognition.start(); } catch {}
+      }
+    };
+
+    recognitionRef.current = recognition;
+    setIsListening(true);
+    setAiState('listening');
+
+    try { recognition.start(); } catch (e) {
+      console.warn('Recognition start error:', e);
     }
-  }, [candidateId, router]);
+  }, [micPermission, isListening, stopListening, isMuted]);
 
+  // ── Barge-in: if user speaks while AI is speaking, stop TTS ─────────────────
   useEffect(() => {
-    fetchQ();
-  }, [fetchQ]);
-
-  // Auto-speak question only if user enabled auto-speak
-  useEffect(() => {
-    if (questions[currentIdx] && !showFeedback && !loading && autoSpeakEnabled && isVoiceMode) {
-      speak(questions[currentIdx].question);
+    if (isListening && aiState === 'speaking') {
+      stopSpeaking();
     }
-  }, [currentIdx, loading, questions, showFeedback, autoSpeakEnabled, isVoiceMode, speak]);
+  }, [isListening, aiState, stopSpeaking]);
 
-  // Question Timer
+  // ── Response timer ────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!timerActive || showFeedback || isVoiceMode) return;
-    setTimeLeft(TIMER_SECONDS);
+    if (!timerActive) return;
+    if (timerRef.current) clearInterval(timerRef.current);
+
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timerRef.current!);
-          handleAutoSubmit();
+          setTimerActive(false);
+          if (!isProcessingRef.current) {
+            if (!silencePromptShown && !answerRef.current.trim()) {
+              // Give a grace nudge before marking timeout
+              setSilencePromptShown(true);
+              speak("Are you still there? Take your time, I'm listening.", () => {
+                // After nudge, give 20 more seconds
+                setTimeLeft(20);
+                setTimerActive(true);
+              });
+            } else {
+              handleAutoSubmit();
+            }
+          }
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
-    return () => clearInterval(timerRef.current!);
-  }, [currentIdx, showFeedback, isVoiceMode]);
 
-  // Anti-Cheat: Tab Switch Detection
-  useEffect(() => {
-    const handleVisibilityChange = async () => {
-      if (document.hidden && !showFeedback && !evaluation?.interview_complete && !generatingReport) {
-        setCheatWarning('⚠️ Warning: Tab switching is monitored and logged in the recruiter evaluation.');
-        try {
-          await recordWarning(candidateId, 'tab_switch');
-        } catch (e) {
-          console.error('Failed to record warning', e);
-        }
-        setTimeout(() => setCheatWarning(''), 5000);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [candidateId, showFeedback, evaluation, generatingReport]);
+    return () => { if (timerRef.current) clearInterval(timerRef.current!); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timerActive]);
 
-  const handleCopyPaste = async () => {
-    setCheatWarning('⚠️ Notice: Copy/paste events are recorded for proctoring compliance.');
-    try {
-      await recordWarning(candidateId, 'copy_paste');
-    } catch (err) {
-      console.error('Failed to record copy paste warning', err);
-    }
-    setTimeout(() => setCheatWarning(''), 5000);
-  };
-
-  const handleAutoSubmit = useCallback(async () => {
-    setTimerActive(false);
-    await handleSubmit(true);
-  }, [answer, currentIdx, questions, candidateId]);
-
-  const handleSubmit = async (isAuto = false) => {
-    if (isSubmitting || questions.length === 0) return;
-    await processSubmission(isAuto && !answer.trim() ? '[No answer provided — time expired]' : answer);
-  };
-
-  const processSubmission = async (submittedAnswer: string) => {
-    if (!submittedAnswer.trim()) {
-      setError('Please provide an answer before submitting.');
-      return;
-    }
-    if (timerRef.current) clearInterval(timerRef.current);
-    setTimerActive(false);
-    setIsSubmitting(true);
+  // ── Fetch first/current question ──────────────────────────────────────────────
+  const fetchQuestion = useCallback(async () => {
+    if (!candidateId || isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    setLoading(true);
     setError('');
-    const currentQ = questions[currentIdx];
 
     try {
-      const result = await submitAnswer(candidateId, currentQ.question_order, submittedAnswer);
-      setEvaluation(result);
-      setShowFeedback(true);
+      const qs = await getQuestions(candidateId);
+      if (qs && qs.length > 0) {
+        const q = qs[0];
+        setQuestion(q);
+        setQuestionNum(q.question_order);
+        setCurrentStage(q.stage || 'greeting');
 
-      // Speak feedback gracefully in sweet female voice if voice mode is on
-      if (isVoiceMode && autoSpeakEnabled) {
-        speak("Thank you for your answer! I have analyzed your response. Let us move to the next question.");
+        // Auto-speak the first question
+        if (isVoiceMode) {
+          speak(q.question, () => {
+            if (!isMuted) startListening();
+          });
+        }
       }
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || 'Could not load interview question. Please retry.';
+      setError(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    } finally {
+      setLoading(false);
+      isFetchingRef.current = false;
+    }
+  }, [candidateId, isVoiceMode, speak, startListening, isMuted]);
 
-      // Append next question seamlessly into state
-      if (result.next_question && !result.interview_complete) {
-        setQuestions(prev => {
-          const newQs = [...prev];
-          newQs[currentIdx + 1] = result.next_question!;
-          return newQs;
+  useEffect(() => {
+    fetchQuestion();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);  // Run ONCE on mount — NOT inside fetchQ's deps to prevent re-fetches
+
+  // ── Process answer submission ──────────────────────────────────────────────────
+  const processSubmission = useCallback(async (submittedAnswer: string) => {
+    if (isProcessingRef.current || !currentQuestionRef.current) return;
+    if (!submittedAnswer.trim()) {
+      submittedAnswer = '[No answer provided — time expired]';
+    }
+
+    isProcessingRef.current = true;
+    stopListening();
+    setTimerActive(false);
+    setAiState('thinking');
+    setError('');
+
+    try {
+      const result = await submitAnswer(
+        candidateId,
+        currentQuestionRef.current.question_order,
+        submittedAnswer
+      );
+
+      setAiState('processing');
+
+      if (result.interview_complete || !result.next_question) {
+        setIsComplete(true);
+        // Mark all stages done
+        setCompletedStages(STAGE_ORDER);
+        speak("Thank you for completing the interview. I'll now generate your comprehensive scorecard.", () => {
+          setGeneratingReport(true);
+          setTimeout(() => {
+            router.push(`/report?candidateId=${candidateId}&name=${encodeURIComponent(candidateName)}`);
+          }, 1200);
+        });
+      } else {
+        const nextQ = result.next_question;
+        // Mark current stage as completed
+        setCompletedStages(prev =>
+          prev.includes(currentStage) ? prev : [...prev, currentStage]
+        );
+
+        setQuestion(nextQ);
+        setQuestionNum(nextQ.question_order);
+        setCurrentStage(nextQ.stage || 'technical');
+        setAnswer('');
+        setLiveTranscript('');
+        setSilencePromptShown(false);
+
+        // AI speaks the next question, then auto-listens
+        speak(nextQ.question, () => {
+          if (isVoiceMode && !isMuted) {
+            startListening();
+          }
         });
       }
     } catch (e: any) {
-      console.error('Submission failed:', e);
-      const detail = e?.response?.data?.detail;
-      const msg = typeof detail === 'string' ? detail : JSON.stringify(detail);
-      setError(msg || 'Evaluating your answer failed. Your response is safely saved, please retry.');
+      const msg = e?.response?.data?.detail || 'Could not evaluate answer. Please retry.';
+      setError(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      setAiState('ready');
     } finally {
-      setIsSubmitting(false);
-      if (!error) setAudioBlob(null);
+      isProcessingRef.current = false;
     }
+  }, [
+    candidateId, candidateName, currentStage, isVoiceMode, isMuted,
+    speak, startListening, stopListening, router
+  ]);
+
+  // ── Auto-submit (timer/silence) ────────────────────────────────────────────────
+  const handleAutoSubmit = useCallback(() => {
+    processSubmission(answerRef.current);
+  }, [processSubmission]);
+
+  // ── Manual text submit ────────────────────────────────────────────────────────
+  const handleTextSubmit = () => {
+    if (!answer.trim() || isProcessingRef.current) return;
+    processSubmission(answer.trim());
   };
 
-  // Fixed handleNext: Seamlessly moves to next question without stopping or requiring refresh
-  const handleNext = async () => {
-    if (autoAdvanceRef.current) clearInterval(autoAdvanceRef.current);
-    setAutoAdvanceCount(null);
-
-    if (evaluation?.interview_complete) {
-      setGeneratingReport(true);
-      await new Promise(res => setTimeout(res, 1000));
-      router.push(`/report?candidateId=${candidateId}&name=${encodeURIComponent(candidateName)}`);
-      return;
-    }
-
-    setShowFeedback(false);
-    setEvaluation(null);
-    setAnswer('');
-    setAudioBlob(null);
-    
-    const nextIdx = currentIdx + 1;
-    setCurrentIdx(nextIdx);
-    setTimerActive(true);
-
-    // If next question is not yet in array, fetch it dynamically from backend
-    if (!questions[nextIdx]) {
-      try {
-        const freshQs = await getQuestions(candidateId);
-        if (freshQs && freshQs.length > 0) {
-          setQuestions(freshQs);
-          // Set index to the first unanswered question
-          const activeIndex = freshQs.findIndex(q => !q.question_order || q.question_order === nextIdx + 1);
-          if (activeIndex !== -1) setCurrentIdx(activeIndex);
-        }
-      } catch (err) {
-        console.error('Failed to load next question:', err);
-      }
-    }
+  // ── Manual voice submit (from button) ────────────────────────────────────────
+  const handleManualVoiceSubmit = () => {
+    if (isProcessingRef.current) return;
+    stopListening();
+    processSubmission(answerRef.current || answer);
   };
 
-  // Auto-advance countdown
-  useEffect(() => {
-    if (!showFeedback || !evaluation || evaluation.interview_complete) return;
-    setAutoAdvanceCount(4);
-    autoAdvanceRef.current = setInterval(() => {
-      setAutoAdvanceCount(prev => {
-        if (prev === null || prev <= 1) {
-          if (autoAdvanceRef.current) clearInterval(autoAdvanceRef.current);
-          handleNext();
-          return null;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => {
-      if (autoAdvanceRef.current) clearInterval(autoAdvanceRef.current);
-    };
-  }, [showFeedback, evaluation]);
-
-  // Two-Way Interactive Dialogue: Ask AI / Clarification
+  // ── Clarification ─────────────────────────────────────────────────────────────
   const handleAskClarification = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clarifyQuery.trim() || isClarifying) return;
+    if (!clarifyQuery.trim() || isClarifying || !question) return;
     setIsClarifying(true);
     setClarifyResponse('');
 
     try {
-      const currentQ = questions[currentIdx]?.question || 'General technical interview question';
-      const res = await clarifyQuestion(candidateId, currentQ, clarifyQuery.trim());
+      const res = await clarifyQuestion(candidateId, question.question, clarifyQuery.trim());
       setClarifyResponse(res.ai_response);
-      
-      // Speak the clarification answer in sweet female voice
-      speak(res.ai_response);
-    } catch (err: any) {
-      setClarifyResponse('Feel free to assume standard industry best practices and continue with your approach.');
+      // Speak the clarification then return to listening mode
+      speak(res.ai_response, () => {
+        if (isVoiceMode && !isMuted) startListening();
+      });
+    } catch {
+      setClarifyResponse('Feel free to proceed with standard industry assumptions.');
     } finally {
       setIsClarifying(false);
+      setShowClarifyModal(false);
+      setClarifyQuery('');
     }
   };
 
-  // Explicit End & Finish Interview
+  // ── Finish interview ──────────────────────────────────────────────────────────
   const handleConfirmFinish = async () => {
     setShowFinishConfirm(false);
     setGeneratingReport(true);
-    try {
-      await finishInterview(candidateId);
-    } catch (e) {
-      console.warn('Finish interview call completed with fallback:', e);
-    }
-    await new Promise(res => setTimeout(res, 1200));
+    stopListening();
+    stopSpeaking();
+    try { await finishInterview(candidateId); } catch {}
     router.push(`/report?candidateId=${candidateId}&name=${encodeURIComponent(candidateName)}`);
   };
 
-  const timerColor = timeLeft > 30 ? 'text-emerald-400' : timeLeft > 10 ? 'text-amber-400' : 'text-red-400';
-  const progressPercent = questions.length > 0 ? Math.min(100, Math.round(((currentIdx + 1) / Math.max(totalQuestions, 10)) * 100)) : 10;
+  // ── Anti-cheat ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const onVisibilityChange = async () => {
+      if (document.hidden && !isComplete && !generatingReport) {
+        setCheatWarning('⚠️ Tab switching is monitored and logged for proctoring compliance.');
+        try { await recordWarning(candidateId, 'tab_switch'); } catch {}
+        setTimeout(() => setCheatWarning(''), 5000);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [candidateId, isComplete, generatingReport]);
 
+  // Cleanup on unmount
+  useEffect(() => () => {
+    stopListening();
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (orbAnimRef.current) clearInterval(orbAnimRef.current);
+  }, [stopListening]);
+
+  // ── Computed values ────────────────────────────────────────────────────────────
+  const progressPercent = Math.min(100, Math.round((questionNum / Math.max(totalQuestions, 10)) * 100));
+  const stageMeta       = STAGE_META[currentStage] || STAGE_META.general;
+  const timerColor      = timeLeft > 30 ? 'text-emerald-400' : timeLeft > 10 ? 'text-amber-400' : 'text-red-400';
+  const timerPct        = (timeLeft / RESPONSE_SECONDS) * 100;
+
+  // ── Orb visual config ─────────────────────────────────────────────────────────
+  const orbConfig = {
+    ready:      { bg: 'from-slate-700/60 to-slate-800/60', glow: 'shadow-slate-500/20',   pulse: false, ring: 'border-slate-600/40', label: '🟢 Ready', labelColor: 'text-emerald-400' },
+    speaking:   { bg: 'from-purple-600/40 to-violet-700/40', glow: 'shadow-purple-500/40', pulse: true,  ring: 'border-purple-400/60', label: '🟣 AI Speaking', labelColor: 'text-purple-300' },
+    listening:  { bg: 'from-blue-600/40 to-cyan-700/40',   glow: 'shadow-cyan-500/40',   pulse: true,  ring: 'border-cyan-400/60',   label: '🔵 Listening…', labelColor: 'text-cyan-300' },
+    thinking:   { bg: 'from-amber-600/30 to-yellow-700/30', glow: 'shadow-amber-500/30', pulse: true,  ring: 'border-amber-400/60',  label: '🟡 AI Thinking…', labelColor: 'text-amber-300' },
+    processing: { bg: 'from-indigo-600/30 to-blue-700/30', glow: 'shadow-indigo-500/30', pulse: true,  ring: 'border-indigo-400/60', label: '⚙️ Processing…', labelColor: 'text-indigo-300' },
+  }[aiState];
+
+  // ── Loading screens ────────────────────────────────────────────────────────────
   if (generatingReport) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <LoadingState
-          title="Synthesizing Your Comprehensive Scorecard"
+          title="Synthesizing Your Scorecard"
           messages={[
-            "Evaluating technical depth and code architecture...",
-            "Analyzing communication clarity and problem-solving...",
-            "Compiling recruiter recommendations and improvement areas...",
-            "Finalizing your downloadable PDF scorecard..."
+            "Evaluating technical depth across all answers…",
+            "Analyzing communication style and problem-solving…",
+            "Generating personalized improvement roadmap…",
+            "Finalizing your scorecard…"
           ]}
         />
       </div>
     );
   }
 
-  if (loading && !questions.length) {
+  if (loading && !question) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <LoadingState
-          title="Initializing AI Interview Studio"
+          title="Preparing Your AI Interview"
           messages={[
-            "Loading verified candidate profile...",
-            "Synthesizing customized question matrix...",
-            "Calibrating sweet female voice engine...",
-            "Opening interview room..."
+            "Loading your candidate profile…",
+            "Analyzing your resume…",
+            "Calibrating question strategy…",
+            "AI interviewer ready…"
           ]}
         />
       </div>
     );
   }
 
-  if (error && !questions.length) {
+  if (error && !question) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4 text-center">
         <div className="glass-card max-w-md w-full p-8">
-          <div className="w-16 h-16 bg-red-500/15 border border-red-500/30 rounded-2xl flex items-center justify-center mx-auto mb-4 text-red-400">
-            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h2 className="text-2xl font-bold text-white mb-2">Session Interrupted</h2>
-          <p className="text-red-300/80 text-sm mb-6 leading-relaxed">{error}</p>
-          <div className="flex flex-col gap-3">
-            <button onClick={() => fetchQ()} className="btn-primary w-full py-3.5">
-              🔄 Retry Loading
-            </button>
-            <button onClick={() => router.push('/')} className="text-white/50 hover:text-white/80 text-xs font-semibold">
-              ← Return to Registration
-            </button>
-          </div>
+          <div className="text-5xl mb-4">⚠️</div>
+          <h2 className="text-xl font-bold text-white mb-2">Interview Interrupted</h2>
+          <p className="text-red-300/80 text-sm mb-6">{error}</p>
+          <button onClick={fetchQuestion} className="btn-primary w-full py-3">🔄 Retry</button>
         </div>
       </div>
     );
   }
 
-  // Graceful fallback if index is loading
-  const currentQ = questions[currentIdx] || {
-    question_order: currentIdx + 1,
-    question_type: 'technical',
-    stage: 'technical',
-    question: 'Please walk me through your engineering design approach for scalable systems.'
-  };
-
-  const typeInfo = TYPE_LABELS[currentQ.question_type] || TYPE_LABELS.general;
-
   return (
-    <div className="min-h-screen flex flex-col px-4 sm:px-6 lg:px-8 py-6 relative">
-      
-      {/* Top Floating Action Bar: Finish & Submit */}
-      <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
-        <button
-          onClick={() => setShowFinishConfirm(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-xs font-bold transition-all shadow-lg backdrop-blur-md hover:scale-105"
-          title="Finish and submit interview now"
-        >
-          <span>🏁 Finish & Submit Interview</span>
-        </button>
+    <div className="min-h-screen flex flex-col relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #060B16 0%, #0B0F1A 50%, #080C17 100%)' }}>
+
+      {/* ── Background mesh ──────────────────────────────────────────────────── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute -top-40 -left-40 w-96 h-96 rounded-full opacity-10"
+          style={{ background: 'radial-gradient(circle, #7C3AED 0%, transparent 70%)' }} />
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 rounded-full opacity-10"
+          style={{ background: 'radial-gradient(circle, #06B6D4 0%, transparent 70%)' }} />
       </div>
 
-      {/* Top Header Panel */}
-      <div className="max-w-4xl w-full mx-auto mb-6 flex flex-wrap items-center justify-between gap-4 glass-panel px-6 py-4 rounded-2xl">
+      {/* ── Top bar ──────────────────────────────────────────────────────────── */}
+      <div className="relative z-10 flex items-center justify-between px-6 py-4 border-b border-white/5 backdrop-blur-xl"
+        style={{ background: 'rgba(6,11,22,0.8)' }}>
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-primary-500/30 to-purple-500/30 border border-primary-400/40 flex items-center justify-center text-xl">
-            👩‍💼
+          <span className="text-lg font-black bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">
+            ✨ Smart Interview AI
+          </span>
+          <span className="text-white/20">|</span>
+          <span className="text-white/50 text-sm">{candidateName}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`text-xs font-bold px-3 py-1 rounded-full border backdrop-blur-sm ${stageMeta.color} border-white/10 bg-white/5`}>
+            {stageMeta.icon} {stageMeta.label}
+          </span>
+          <span className="font-mono text-white/40 text-xs">Q {questionNum} / ~{totalQuestions}</span>
+          <button
+            onClick={() => setShowFinishConfirm(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-bold transition-all"
+          >
+            🏁 Finish
+          </button>
+        </div>
+      </div>
+
+      {/* ── Progress bar ─────────────────────────────────────────────────────── */}
+      <div className="relative z-10 px-6 pt-3">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex justify-between text-xs text-white/30 mb-1.5">
+            <span>Interview Progress</span>
+            <span className="font-mono">{progressPercent}%</span>
           </div>
-          <div>
-            <h1 className="text-base font-bold text-white leading-tight">AI Interview Practice Studio</h1>
-            <p className="text-white/50 text-xs">{getGreeting()}, <span className="text-primary-300 font-semibold">{candidateName}</span></p>
+          <div className="w-full bg-white/5 rounded-full h-1.5 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${progressPercent}%`, background: 'linear-gradient(90deg, #7C3AED, #06B6D4)' }}
+            />
           </div>
         </div>
+      </div>
 
-        {/* Controls & Voice Mode Options */}
-        <div className="flex items-center gap-2.5">
-          {/* Voice Mode Toggle */}
-          <button
-            onClick={() => {
-              const next = !isVoiceMode;
-              setIsVoiceMode(next);
-              setAnswer('');
-              setAudioBlob(null);
-              setTimerActive(!next);
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-              isVoiceMode
-                ? 'bg-purple-500/25 text-purple-200 border border-purple-400/40 shadow-lg shadow-purple-500/20'
-                : 'bg-white/5 text-white/50 border border-white/10 hover:text-white'
-            }`}
-          >
-            <span>{isVoiceMode ? '🎙️ Voice Mode' : '⌨️ Text Mode'}</span>
-          </button>
+      {/* ── Main content area ─────────────────────────────────────────────────── */}
+      <div className="relative z-10 flex-1 flex flex-col lg:flex-row gap-6 px-6 py-6 max-w-6xl mx-auto w-full">
 
-          {/* Auto-play Speech Toggle */}
-          {isVoiceMode && (
-            <button
-              onClick={() => setAutoSpeakEnabled(prev => !prev)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
-                autoSpeakEnabled 
-                  ? 'bg-primary-500/25 border-primary-400/40 text-primary-200' 
-                  : 'bg-white/5 border-white/10 text-white/40 hover:text-white'
-              }`}
-              title="Toggle automatic AI speech reading"
-            >
-              {autoSpeakEnabled ? '🔊 Auto-Speech: ON' : '🔈 Auto-Speech: OFF'}
-            </button>
+        {/* ── Left: AI Orb + Question ──────────────────────────────────────────── */}
+        <div className="flex-1 flex flex-col gap-5">
+
+          {/* Cheat warning */}
+          {cheatWarning && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-2xl px-4 py-3 text-red-300 text-sm font-medium">
+              {cheatWarning}
+            </div>
           )}
 
-          <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-mono text-white/70">
-            Q {currentIdx + 1} / ~{totalQuestions}
-          </div>
-        </div>
-      </div>
-
-      {/* Stage Progress Bar */}
-      <div className="max-w-4xl w-full mx-auto mb-6 space-y-2">
-        <div className="flex justify-between items-center text-xs text-white/50 font-medium">
-          <span className="capitalize text-primary-300 font-semibold flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-primary-400 animate-pulse" />
-            Stage: {currentQ.stage || 'General'}
-          </span>
-          <span className="font-mono">{progressPercent}% Progress</span>
-        </div>
-        <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden p-0.5 border border-white/10">
-          <div
-            className="bg-gradient-to-r from-primary-500 via-purple-500 to-cyan-400 h-full rounded-full progress-bar shadow-lg shadow-primary-500/50"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-      </div>
-
-      <div className="max-w-4xl w-full mx-auto flex-1 flex flex-col gap-6">
-        
-        {/* Anti-Cheat Warning */}
-        {cheatWarning && (
-          <div className="bg-red-500/15 border border-red-500/30 rounded-2xl px-5 py-3.5 flex items-center gap-3 text-red-300 text-sm animate-shake">
-            <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <p className="font-semibold">{cheatWarning}</p>
-          </div>
-        )}
-
-        {/* Error Banner */}
-        {error && (
-          <div className="bg-red-500/15 border border-red-500/30 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-3 text-red-300 text-sm animate-shake">
-            <div className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <p>{error}</p>
+          {/* Error banner */}
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-red-300 text-sm">{error}</p>
+              <button onClick={() => setError('')} className="text-red-400 text-xs font-bold">✕</button>
             </div>
-            <button
-              onClick={() => isVoiceMode ? handleSubmitVoice() : handleSubmit(false)}
-              className="px-3.5 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-200 text-xs font-bold rounded-xl border border-red-500/40 transition-all shrink-0"
-            >
-              Retry
-            </button>
-          </div>
-        )}
+          )}
 
-        {/* Question Card */}
-        <div className="glass-card p-6 sm:p-8 border border-white/15 shadow-2xl relative overflow-hidden">
-          
-          {/* Header Row */}
-          <div className="flex flex-wrap items-center justify-between mb-5 gap-3">
-            <span className={`inline-flex items-center px-3.5 py-1 rounded-full text-xs font-bold border ${typeInfo.badgeBg} ${typeInfo.color}`}>
-              {typeInfo.label}
+          {/* AI Orb */}
+          <div className="flex flex-col items-center gap-4 py-4">
+            {/* Orb */}
+            <div className="relative flex items-center justify-center">
+              {/* Outer glow rings */}
+              {orbConfig.pulse && (
+                <>
+                  <div className="absolute w-48 h-48 rounded-full animate-ping opacity-10"
+                    style={{ background: aiState === 'speaking' ? '#7C3AED' : aiState === 'listening' ? '#06B6D4' : '#F59E0B', animationDuration: '2s' }} />
+                  <div className="absolute w-40 h-40 rounded-full animate-pulse opacity-15"
+                    style={{ background: aiState === 'speaking' ? '#7C3AED' : aiState === 'listening' ? '#06B6D4' : '#F59E0B' }} />
+                </>
+              )}
+
+              {/* Main orb */}
+              <div className={`relative w-32 h-32 rounded-full flex items-center justify-center border-2 ${orbConfig.ring} shadow-2xl ${orbConfig.glow} transition-all duration-500 bg-gradient-to-br ${orbConfig.bg}`}>
+                {/* Waveform bars inside orb */}
+                <div className="flex items-center gap-1 h-10">
+                  {[...Array(7)].map((_, i) => {
+                    const height = aiState === 'listening'
+                      ? `${20 + Math.abs(Math.sin((orbWave + i * 45) * Math.PI / 180)) * 28}px`
+                      : aiState === 'speaking'
+                      ? `${15 + Math.abs(Math.sin((orbWave + i * 35) * Math.PI / 180)) * 25}px`
+                      : aiState === 'thinking' || aiState === 'processing'
+                      ? `${12 + Math.abs(Math.sin((orbWave * 2 + i * 60) * Math.PI / 180)) * 15}px`
+                      : '8px';
+                    const color = aiState === 'listening' ? '#06B6D4' : aiState === 'speaking' ? '#A855F7' : '#F59E0B';
+                    return (
+                      <div key={i} className="rounded-full w-1.5 transition-all duration-75"
+                        style={{ height, backgroundColor: color, opacity: aiState === 'ready' ? 0.3 : 0.85 }} />
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* AI state label */}
+            <span className={`text-sm font-bold tracking-wide ${orbConfig.labelColor}`}>
+              {orbConfig.label}
             </span>
-
-            <div className="flex items-center gap-2.5">
-              {/* Speaking Wave Visualizer */}
-              {isSpeaking && (
-                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-bold">
-                  <div className="flex items-end gap-0.5 h-3">
-                    <span className="w-1 bg-purple-400 rounded-full wave-bar-1" />
-                    <span className="w-1 bg-purple-400 rounded-full wave-bar-3" />
-                    <span className="w-1 bg-purple-400 rounded-full wave-bar-5" />
-                    <span className="w-1 bg-purple-400 rounded-full wave-bar-2" />
-                  </div>
-                  <span>AI Speaking (Female Voice)...</span>
-                </div>
-              )}
-
-              {/* Sweet Female Voice Play Button */}
-              {!showFeedback && (
-                <button
-                  onClick={() => speak(currentQ.question)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 hover:text-white transition-all text-xs font-bold border border-purple-500/30 shadow-md"
-                  title="Play question in sweet female voice"
-                >
-                  <span>🔊 Play Voice</span>
-                </button>
-              )}
-
-              {/* Two-Way Person to Person Clarify Button */}
-              {!showFeedback && (
-                <button
-                  onClick={() => {
-                    setShowClarifyModal(true);
-                    setClarifyResponse('');
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 hover:text-white transition-all text-xs font-bold border border-cyan-500/30"
-                  title="Ask interviewer a clarifying question"
-                >
-                  <span>💬 Ask AI Clarification</span>
-                </button>
-              )}
-
-              {!showFeedback && !isVoiceMode && (
-                <div className={`flex items-center gap-1.5 font-mono text-lg font-bold px-3 py-1 rounded-xl bg-white/5 border border-white/10 ${timerColor}`}>
-                  ⏱️ {String(Math.floor(timeLeft / 60)).padStart(2, '0')}:{String(timeLeft % 60).padStart(2, '0')}
-                </div>
-              )}
-            </div>
           </div>
 
-          {/* Question Text */}
-          <p className="text-white text-xl sm:text-2xl font-semibold leading-relaxed select-none" onCopy={handleCopyPaste}>
-            {currentQ.question}
-          </p>
+          {/* Question card */}
+          {question && (
+            <div className="rounded-2xl border border-white/10 p-6"
+              style={{ background: 'rgba(255,255,255,0.04)', backdropFilter: 'blur(20px)' }}>
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-xs font-bold text-white/30 uppercase tracking-widest">Question {questionNum}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full border bg-white/5 ${stageMeta.color} border-white/10`}>
+                  {stageMeta.icon} {stageMeta.label}
+                </span>
+              </div>
+              <p className="text-white text-lg sm:text-xl font-medium leading-relaxed">
+                {question.question}
+              </p>
+              {/* Replay button */}
+              <button
+                onClick={() => speak(question.question)}
+                disabled={aiState === 'speaking'}
+                className="mt-4 text-xs text-white/30 hover:text-purple-300 transition-colors flex items-center gap-1.5"
+              >
+                🔊 Replay question
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Main Response Area */}
-        {!showFeedback ? (
-          <div className="glass-card p-6 sm:p-10 border border-white/15 flex flex-col items-center justify-center min-h-[340px]">
-            {isVoiceMode ? (
-              <div className="w-full flex flex-col items-center gap-6 text-center">
-                
-                {/* Visualizer Recording Orb */}
-                <div className="relative">
-                  {isListening && (
-                    <>
-                      <div className="absolute inset-0 rounded-full bg-red-500/25 animate-ping" style={{ animationDuration: '1.5s' }} />
-                      <div className="absolute -inset-4 rounded-full bg-red-500/15 animate-pulse" />
-                    </>
-                  )}
+        {/* ── Right: Response + Controls ────────────────────────────────────────── */}
+        <div className="lg:w-96 flex flex-col gap-4">
 
-                  <div className={`w-28 h-28 rounded-3xl flex items-center justify-center transition-all duration-300 relative z-10 ${
-                    isListening 
-                      ? 'bg-red-500 text-white shadow-[0_0_50px_rgba(239,68,68,0.5)] scale-105' 
-                      : isTranscribing || isSubmitting 
-                        ? 'bg-purple-500/20 text-purple-300 border-2 border-purple-400 animate-pulse' 
-                        : answer.trim() || audioBlob 
-                          ? 'bg-emerald-500/20 text-emerald-300 border-2 border-emerald-400/50' 
-                          : 'bg-white/5 border-2 border-white/10 text-white/50 hover:border-primary-400/60'
-                  }`}>
-                    {isTranscribing || isSubmitting ? (
-                      <svg className="w-12 h-12 animate-spin" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                    ) : (
-                      <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        {isListening ? (
-                          <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
-                        ) : answer.trim() || audioBlob ? (
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        ) : (
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                        )}
-                      </svg>
-                    )}
-                  </div>
-                </div>
-
-                {/* Subtitle Status */}
-                <div className="space-y-1">
-                  <p className="text-white font-bold text-lg">
-                    {isListening ? '🎙️ Listening & Transcribing in Real-Time...' : answer.trim() ? '✅ Speech Transcribed Live' : 'Ready to record your answer'}
-                  </p>
-                  <p className="text-white/40 text-xs">
-                    {isListening ? 'Speak naturally. Your words appear live below.' : 'Click "Start Recording" when ready'}
-                  </p>
-                </div>
-
-                {/* Real-Time Live Transcript Preview Box */}
-                {answer.trim() && (
-                  <div className="w-full max-w-xl text-left bg-white/5 border border-white/15 rounded-2xl p-4 space-y-2">
-                    <div className="flex justify-between items-center text-xs text-white/50 font-mono">
-                      <span>Live Speech Transcript:</span>
-                      <span className="text-emerald-300 font-bold">● Live Edit Enabled</span>
+          {/* Listening / transcript area */}
+          {isVoiceMode ? (
+            <div className="rounded-2xl border border-white/10 p-5 flex flex-col gap-4"
+              style={{ background: 'rgba(255,255,255,0.04)', backdropFilter: 'blur(20px)' }}>
+              <div className="flex items-center justify-between">
+                <span className={`text-sm font-bold ${aiState === 'listening' ? 'text-cyan-300' : 'text-white/40'}`}>
+                  {aiState === 'listening' ? '🎙 Listening…' :
+                   aiState === 'thinking'  ? '🟡 Processing your answer…' :
+                   aiState === 'speaking'  ? '🟣 AI is speaking…' :
+                   '🎙 Your Response'}
+                </span>
+                {/* 60-second timer */}
+                {timerActive && (
+                  <div className="flex items-center gap-2">
+                    <div className="w-20 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-1000"
+                        style={{ width: `${timerPct}%`, background: timeLeft > 30 ? '#10B981' : timeLeft > 10 ? '#F59E0B' : '#EF4444' }} />
                     </div>
-                    <textarea
-                      value={answer}
-                      onChange={e => setAnswer(e.target.value)}
-                      rows={3}
-                      className="w-full bg-transparent text-white text-sm border-0 focus:ring-0 focus:outline-none resize-none leading-relaxed"
-                      placeholder="Your transcribed text will appear here..."
-                    />
+                    <span className={`font-mono text-xs font-bold ${timerColor}`}>
+                      {String(Math.floor(timeLeft / 60)).padStart(2, '0')}:{String(timeLeft % 60).padStart(2, '0')}
+                    </span>
                   </div>
                 )}
-
-                {/* Voice Action Buttons */}
-                <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md">
-                  {!isListening && !answer.trim() && !audioBlob && (
-                    <button
-                      onClick={handleStartRecording}
-                      disabled={isSpeaking || isTranscribing || isSubmitting}
-                      className="btn-primary flex-1 py-4 text-base font-bold shadow-xl shadow-primary-500/25"
-                    >
-                      <span>🎙️ Start Recording</span>
-                    </button>
-                  )}
-
-                  {isListening && (
-                    <button
-                      onClick={handleStopRecording}
-                      className="bg-red-500 hover:bg-red-600 active:scale-95 text-white font-bold py-4 px-8 rounded-xl flex-1 transition-all shadow-xl shadow-red-500/30 flex items-center justify-center gap-2"
-                    >
-                      <div className="w-3.5 h-3.5 bg-white rounded-sm" />
-                      <span>Stop & Review</span>
-                    </button>
-                  )}
-
-                  {(answer.trim() || audioBlob) && !isListening && (
-                    <>
-                      <button
-                        onClick={handleStartRecording}
-                        disabled={isTranscribing || isSubmitting}
-                        className="btn-secondary flex-1 py-4 text-sm font-bold"
-                      >
-                        🔄 Retake
-                      </button>
-                      <button
-                        onClick={handleSubmitVoice}
-                        disabled={isTranscribing || isSubmitting}
-                        className="btn-primary flex-[2] py-4 text-base font-bold"
-                      >
-                        {isTranscribing ? 'Transcribing...' : isSubmitting ? 'Evaluating...' : 'Submit Answer ➔'}
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {micError && <p className="text-red-400 text-xs font-semibold">{micError}</p>}
               </div>
-            ) : (
-              <div className="w-full flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-semibold text-white/80">Type Your Answer</label>
-                  <span className="text-xs text-white/40 font-mono">{answer.length} chars</span>
-                </div>
 
-                <textarea
-                  value={answer}
-                  onChange={e => setAnswer(e.target.value)}
-                  onPaste={handleCopyPaste}
-                  onCopy={handleCopyPaste}
-                  placeholder="Provide a detailed, structured technical response..."
-                  rows={8}
-                  className="input-field resize-none text-base leading-relaxed p-5"
-                  disabled={isSubmitting}
-                />
-
-                <button
-                  onClick={() => handleSubmit(false)}
-                  disabled={isSubmitting || !answer.trim()}
-                  className="btn-primary self-end px-10 py-3.5 text-base font-bold shadow-xl shadow-primary-500/20"
-                >
-                  {isSubmitting ? 'Evaluating with AI...' : 'Submit Answer ➔'}
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          /* Response Evaluation Feedback Card */
-          <div className="glass-card p-6 sm:p-8 border border-white/15 space-y-5 animate-slide-up">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                  ✓
-                </div>
-                <h3 className="text-white font-bold text-lg">AI Response Evaluation</h3>
-              </div>
-              <span className="text-xs font-mono text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full">
-                Graded Instantly
-              </span>
-            </div>
-
-            {/* Score Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label: 'Technical Depth', value: evaluation?.technical_score, color: 'text-cyan-300' },
-                { label: 'Clarity', value: evaluation?.clarity_score, color: 'text-purple-300' },
-                { label: 'Architecture', value: evaluation?.depth_score, color: 'text-indigo-300' },
-                { label: 'Communication', value: evaluation?.communication_score, color: 'text-emerald-300' },
-              ].map(s => (
-                <div key={s.label} className="bg-white/5 border border-white/10 rounded-2xl p-3.5 text-center">
-                  <p className="text-white/40 text-xs mb-1 font-medium">{s.label}</p>
-                  <p className={`text-2xl font-extrabold font-mono ${s.color}`}>
-                    {s.value?.toFixed(1)}<span className="text-white/30 text-xs font-normal">/10</span>
+              {/* Live transcript */}
+              <div className="min-h-[100px] rounded-xl border border-white/8 p-3 text-sm text-white/70 leading-relaxed"
+                style={{ background: 'rgba(0,0,0,0.2)' }}>
+                {liveTranscript || answer ? (
+                  <p className="whitespace-pre-wrap">{liveTranscript || answer}</p>
+                ) : (
+                  <p className="text-white/25 italic">
+                    {aiState === 'speaking' ? 'Listening begins after AI finishes speaking…' :
+                     aiState === 'listening' ? 'Speak naturally. Your words appear here.' :
+                     'Waiting…'}
                   </p>
-                </div>
-              ))}
-            </div>
-
-            {/* Detailed AI Feedback Box */}
-            <div className="bg-primary-950/40 border border-primary-500/20 rounded-2xl p-5">
-              <p className="text-primary-200 text-sm leading-relaxed italic">
-                "{evaluation?.feedback}"
-              </p>
-            </div>
-
-            {/* Next Step / Complete Action */}
-            {evaluation?.interview_complete ? (
-              <button onClick={handleNext} className="btn-primary w-full py-4 font-extrabold text-lg shadow-2xl shadow-primary-500/30">
-                🏆 View Final Scorecard & Improvement Plan
-              </button>
-            ) : (
-              <div className="flex items-center gap-3">
-                <button onClick={handleNext} className="btn-primary flex-1 py-4 font-bold text-base shadow-xl shadow-primary-500/25">
-                  <span>Proceed to Next Question</span>
-                  <svg className="w-5 h-5 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                  </svg>
-                </button>
-                {autoAdvanceCount !== null && (
-                  <div className="flex flex-col items-center justify-center w-14 h-14 rounded-2xl bg-white/5 border border-white/10 shrink-0 font-mono">
-                    <span className="text-xl font-black text-primary-300">{autoAdvanceCount}s</span>
-                    <span className="text-[8px] text-white/30 uppercase">auto</span>
-                  </div>
                 )}
               </div>
-            )}
+
+              {/* Voice controls */}
+              <div className="flex gap-2 flex-wrap">
+                {!isListening && aiState === 'ready' && !isProcessingRef.current && (
+                  <button onClick={startListening}
+                    className="flex-1 py-2.5 px-4 rounded-xl text-sm font-bold bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 transition-all">
+                    🎙 Start Speaking
+                  </button>
+                )}
+                {isListening && (
+                  <button onClick={handleManualVoiceSubmit}
+                    disabled={!answer.trim()}
+                    className="flex-1 py-2.5 px-4 rounded-xl text-sm font-bold bg-purple-500/25 hover:bg-purple-500/35 border border-purple-500/40 text-purple-200 transition-all disabled:opacity-40">
+                    ✓ Submit Answer
+                  </button>
+                )}
+                {micError && <p className="w-full text-red-400 text-xs">{micError}</p>}
+              </div>
+            </div>
+          ) : (
+            /* Text mode */
+            <div className="rounded-2xl border border-white/10 p-5 flex flex-col gap-3"
+              style={{ background: 'rgba(255,255,255,0.04)', backdropFilter: 'blur(20px)' }}>
+              <label className="text-sm font-semibold text-white/60">Type Your Answer</label>
+              <textarea
+                value={answer}
+                onChange={e => setAnswer(e.target.value)}
+                placeholder="Provide a detailed, structured response…"
+                rows={8}
+                className="w-full bg-white/5 border border-white/10 rounded-xl text-white text-sm p-4 resize-none focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 leading-relaxed"
+                disabled={isProcessingRef.current}
+              />
+              <button
+                onClick={handleTextSubmit}
+                disabled={!answer.trim() || isProcessingRef.current}
+                className="py-3 px-6 rounded-xl text-sm font-bold bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white transition-all disabled:opacity-40 shadow-lg"
+              >
+                {isProcessingRef.current ? 'Evaluating…' : 'Submit Answer ➔'}
+              </button>
+            </div>
+          )}
+
+          {/* ── Conversation Timeline ──────────────────────────────────────────── */}
+          <div className="rounded-2xl border border-white/10 p-5"
+            style={{ background: 'rgba(255,255,255,0.04)', backdropFilter: 'blur(20px)' }}>
+            <p className="text-xs font-bold text-white/30 uppercase tracking-widest mb-3">Interview Progress</p>
+            <div className="flex flex-col gap-2">
+              {STAGE_ORDER.map(s => {
+                const meta   = STAGE_META[s];
+                const done   = completedStages.includes(s);
+                const active = s === currentStage;
+                return (
+                  <div key={s} className={`flex items-center gap-2.5 text-xs font-medium transition-all ${done ? 'text-white/70' : active ? 'text-white' : 'text-white/25'}`}>
+                    <span>{done ? '✅' : active ? '●' : '○'}</span>
+                    <span>{meta.icon} {meta.label}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        )}
+
+          {/* ── Bottom controls ────────────────────────────────────────────────── */}
+          <div className="rounded-2xl border border-white/10 p-4 flex items-center justify-between gap-2"
+            style={{ background: 'rgba(255,255,255,0.04)', backdropFilter: 'blur(20px)' }}>
+            {/* Mute */}
+            <button
+              onClick={() => { setIsMuted(m => !m); if (!isMuted) stopSpeaking(); }}
+              className={`p-2.5 rounded-xl text-sm border transition-all ${isMuted ? 'bg-red-500/20 border-red-500/40 text-red-300' : 'bg-white/5 border-white/10 text-white/40 hover:text-white'}`}
+              title={isMuted ? 'Unmute AI' : 'Mute AI'}
+            >{isMuted ? '🔇' : '🔊'}</button>
+
+            {/* Repeat */}
+            <button
+              onClick={() => question && speak(question.question)}
+              disabled={aiState === 'speaking' || !question}
+              className="p-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white/40 hover:text-white transition-all disabled:opacity-30"
+              title="Repeat question"
+            >🔁</button>
+
+            {/* Voice/Text toggle */}
+            <button
+              onClick={() => { setIsVoiceMode(v => !v); stopListening(); setAnswer(''); }}
+              className={`p-2.5 rounded-xl text-sm border transition-all ${isVoiceMode ? 'bg-purple-500/20 border-purple-500/40 text-purple-300' : 'bg-white/5 border-white/10 text-white/40'}`}
+              title={isVoiceMode ? 'Switch to text' : 'Switch to voice'}
+            >{isVoiceMode ? '🎙' : '⌨️'}</button>
+
+            {/* Ask AI clarification */}
+            <button
+              onClick={() => { setShowClarifyModal(true); setClarifyResponse(''); }}
+              disabled={aiState === 'thinking' || aiState === 'processing'}
+              className="p-2.5 rounded-xl text-sm bg-cyan-500/10 border border-cyan-500/20 text-cyan-300/60 hover:text-cyan-300 transition-all disabled:opacity-30"
+              title="Ask AI for clarification"
+            >💬</button>
+
+            {/* End interview */}
+            <button
+              onClick={() => setShowFinishConfirm(true)}
+              className="p-2.5 rounded-xl text-sm bg-emerald-500/10 border border-emerald-500/20 text-emerald-300/60 hover:text-emerald-300 transition-all"
+              title="End interview"
+            >🏁</button>
+          </div>
+        </div>
       </div>
 
-      {/* Two-Way Clarification Dialog Modal */}
+      {/* ── Clarification modal ───────────────────────────────────────────────── */}
       {showClarifyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-          <div className="glass-card max-w-lg w-full p-6 sm:p-8 border border-cyan-500/30 space-y-5 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-lg">
+          <div className="max-w-lg w-full rounded-3xl border border-cyan-500/30 p-6 shadow-2xl space-y-4"
+            style={{ background: 'rgba(6,11,22,0.95)' }}>
             <div className="flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">💬</span>
-                <h3 className="text-lg font-bold text-white">Ask Clarifying Question</h3>
-              </div>
-              <button
-                onClick={() => setShowClarifyModal(false)}
-                className="text-white/40 hover:text-white text-lg font-bold p-1"
-              >
-                ✕
-              </button>
+              <h3 className="text-lg font-bold text-white">💬 Ask AI for Clarification</h3>
+              <button onClick={() => setShowClarifyModal(false)} className="text-white/30 hover:text-white text-xl">✕</button>
             </div>
-
-            <p className="text-white/60 text-xs leading-relaxed">
-              Have a doubt or want to discuss assumptions about the current question? Ask the AI interviewer directly.
+            <p className="text-white/40 text-xs">
+              Ask about the current question. AI will answer briefly and return to the interview.
             </p>
-
-            <form onSubmit={handleAskClarification} className="space-y-4">
+            <form onSubmit={handleAskClarification} className="space-y-3">
               <textarea
                 value={clarifyQuery}
                 onChange={e => setClarifyQuery(e.target.value)}
-                placeholder="e.g., Can I assume this architecture uses a relational database, or should I design for NoSQL?"
+                placeholder="e.g., What do you mean by inference optimization?"
                 rows={3}
-                className="input-field text-sm"
+                className="w-full bg-white/5 border border-white/10 rounded-xl text-white text-sm p-3 resize-none focus:outline-none focus:border-cyan-500/50"
                 disabled={isClarifying}
               />
-
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowClarifyModal(false)}
-                  className="btn-secondary text-xs py-2 px-4"
-                >
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => setShowClarifyModal(false)}
+                  className="px-4 py-2 text-xs rounded-xl bg-white/5 text-white/40 hover:text-white border border-white/10">
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  disabled={isClarifying || !clarifyQuery.trim()}
-                  className="btn-primary text-xs py-2 px-5 font-bold"
-                >
-                  {isClarifying ? 'AI Thinking...' : 'Ask AI ➔'}
+                <button type="submit" disabled={isClarifying || !clarifyQuery.trim()}
+                  className="px-5 py-2 text-xs rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-500/40 font-bold disabled:opacity-40">
+                  {isClarifying ? 'AI Thinking…' : 'Ask ➔'}
                 </button>
               </div>
             </form>
-
-            {/* AI Voice Response to Candidate */}
             {clarifyResponse && (
-              <div className="bg-cyan-950/40 border border-cyan-500/30 rounded-2xl p-4 space-y-2 animate-slide-up">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-cyan-300">AI Interviewer Response:</span>
-                  <button
-                    onClick={() => speak(clarifyResponse)}
-                    className="text-xs text-cyan-300 hover:text-white flex items-center gap-1"
-                  >
-                    🔊 Play Response
-                  </button>
-                </div>
-                <p className="text-cyan-100 text-sm leading-relaxed">{clarifyResponse}</p>
+              <div className="bg-cyan-950/40 border border-cyan-500/20 rounded-xl p-4 text-cyan-100 text-sm leading-relaxed">
+                {clarifyResponse}
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Finish & Submit Confirmation Modal */}
+      {/* ── Finish confirmation modal ──────────────────────────────────────────── */}
       {showFinishConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-          <div className="glass-card max-w-md w-full p-6 sm:p-8 border border-emerald-500/30 space-y-6 text-center">
-            <div className="w-16 h-16 rounded-3xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto text-3xl">
-              🏁
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold text-white">Finish & Submit Interview?</h3>
-              <p className="text-white/60 text-xs leading-relaxed">
-                Your completed answers will be finalized, your official scorecard generated, and your detailed interview feedback will be emailed to you.
-              </p>
-            </div>
-
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-lg">
+          <div className="max-w-md w-full rounded-3xl border border-emerald-500/30 p-8 text-center shadow-2xl space-y-5"
+            style={{ background: 'rgba(6,11,22,0.95)' }}>
+            <div className="w-16 h-16 rounded-3xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center mx-auto text-3xl">🏁</div>
+            <h3 className="text-xl font-bold text-white">Finish Interview?</h3>
+            <p className="text-white/40 text-sm">
+              Your scorecard will be generated and emailed to you.
+            </p>
             <div className="flex gap-3">
-              <button
-                onClick={() => setShowFinishConfirm(false)}
-                className="btn-secondary flex-1 py-3 text-xs font-bold"
-              >
-                Keep Practicing
+              <button onClick={() => setShowFinishConfirm(false)}
+                className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white/60 hover:text-white text-sm font-bold transition-all">
+                Keep Going
               </button>
-              <button
-                onClick={handleConfirmFinish}
-                className="btn-primary flex-1 py-3 text-xs font-bold bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20"
-              >
-                Yes, Submit Now
+              <button onClick={handleConfirmFinish}
+                className="flex-1 py-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-sm font-bold transition-all">
+                Yes, Submit
               </button>
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }
@@ -982,9 +879,10 @@ export default function InterviewPage() {
     <Suspense fallback={
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex gap-2">
-          <span className="w-3 h-3 rounded-full bg-primary-400 animate-bounce" />
-          <span className="w-3 h-3 rounded-full bg-primary-400 animate-bounce [animation-delay:0.2s]" />
-          <span className="w-3 h-3 rounded-full bg-primary-400 animate-bounce [animation-delay:0.4s]" />
+          {[0, 0.2, 0.4].map((d, i) => (
+            <span key={i} className="w-3 h-3 rounded-full bg-purple-400 animate-bounce"
+              style={{ animationDelay: `${d}s` }} />
+          ))}
         </div>
       </div>
     }>
