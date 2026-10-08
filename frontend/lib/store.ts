@@ -1,5 +1,6 @@
 export interface Candidate {
     id: number;
+    secure_token?: string;
     name: string;
     mobile: string;
     email: string;
@@ -34,36 +35,29 @@ export interface SessionData {
     answers: AnswerItem[];
     currentQuestionIndex: number;
     status: string;
+    warnings?: {
+        tabSwitchCount: number;
+        copyPasteCount: number;
+    };
 }
 
 // Global sessions map for serverless execution runtime
 const globalSessions: Record<number, SessionData> = {};
+const tokenSessions: Record<string, SessionData> = {};
 
-export function getSession(id: number): SessionData | undefined {
-    if (globalSessions[id]) return globalSessions[id];
-    // Fallback candidate session
-    const candidate: Candidate = {
-        id: id || 1001,
-        name: 'Candidate',
-        mobile: '+919876543210',
-        email: 'candidate@ashvance.tech',
-        position: 'Software Engineer',
-        isVerified: true,
-        status: 'verified',
-        createdAt: new Date().toISOString(),
-    };
-    const questions: QuestionItem[] = [
+function createDefaultQuestions(name: string, position: string): QuestionItem[] {
+    return [
         {
             question_order: 1,
             question_type: 'greeting',
             stage: 'greeting',
-            question: `Hello and welcome to your AI technical interview with ASHVANCE TECH for the ${candidate.position} role. Could you please start by giving me a brief introduction of yourself, your technical background, and what you're passionate about building?`,
+            question: `Hello ${name}! Welcome to your AI technical interview with ASHVANCE TECH for the ${position} role. Could you please start by giving me a brief introduction of yourself, your background, and key areas of expertise?`,
         },
         {
             question_order: 2,
             question_type: 'background',
             stage: 'background',
-            question: `Thank you for introducing yourself. Looking at your engineering background, what core programming languages, frameworks, and architecture paradigms do you feel most proficient with in production?`,
+            question: `Thank you for introducing yourself, ${name}. What core programming languages, frameworks, and architecture paradigms do you feel most proficient with in production?`,
         },
         {
             question_order: 3,
@@ -96,21 +90,94 @@ export function getSession(id: number): SessionData | undefined {
             question: `That concludes our technical evaluation stages. Do you have any questions for ASHVANCE TECH regarding our engineering culture, technical challenges, or growth opportunities?`,
         },
     ];
+}
+
+export function getSession(id: number): SessionData | undefined {
+    if (globalSessions[id]) return globalSessions[id];
+    
+    // Check if session is stored by token
+    for (const token in tokenSessions) {
+        if (tokenSessions[token].candidate.id === id) {
+            globalSessions[id] = tokenSessions[token];
+            return tokenSessions[token];
+        }
+    }
+
+    // Fallback candidate session
+    const candidateId = id || 1001;
+    const token = `ashvance_${candidateId}_token`;
+    const candidate: Candidate = {
+        id: candidateId,
+        secure_token: token,
+        name: 'Candidate',
+        mobile: '+919876543210',
+        email: 'candidate@ashvance.tech',
+        position: 'Software Engineer',
+        isVerified: true,
+        status: 'verified',
+        createdAt: new Date().toISOString(),
+    };
 
     const fallbackSession: SessionData = {
         candidate,
         otpCode: '123456',
-        questions,
+        questions: createDefaultQuestions('Candidate', 'Software Engineer'),
         answers: [],
         currentQuestionIndex: 0,
         status: 'verified',
+        warnings: { tabSwitchCount: 0, copyPasteCount: 0 },
     };
-    globalSessions[id] = fallbackSession;
+
+    globalSessions[candidateId] = fallbackSession;
+    tokenSessions[token] = fallbackSession;
     return fallbackSession;
+}
+
+export function getSessionByToken(token: string): SessionData {
+    if (tokenSessions[token]) return tokenSessions[token];
+
+    // Check if matching candidate exists in globalSessions
+    for (const id in globalSessions) {
+        if (globalSessions[id].candidate.secure_token === token) {
+            tokenSessions[token] = globalSessions[id];
+            return globalSessions[id];
+        }
+    }
+
+    // Generate valid session dynamically for this token
+    const id = Date.now();
+    const candidate: Candidate = {
+        id,
+        secure_token: token,
+        name: 'Candidate',
+        mobile: '+919876543210',
+        email: 'candidate@ashvance.tech',
+        position: 'Software Engineer',
+        isVerified: true,
+        status: 'verified',
+        createdAt: new Date().toISOString(),
+    };
+
+    const session: SessionData = {
+        candidate,
+        otpCode: '123456',
+        questions: createDefaultQuestions('Candidate', 'Software Engineer'),
+        answers: [],
+        currentQuestionIndex: 0,
+        status: 'verified',
+        warnings: { tabSwitchCount: 0, copyPasteCount: 0 },
+    };
+
+    tokenSessions[token] = session;
+    globalSessions[id] = session;
+    return session;
 }
 
 export function saveSession(session: SessionData): void {
     globalSessions[session.candidate.id] = session;
+    if (session.candidate.secure_token) {
+        tokenSessions[session.candidate.secure_token] = session;
+    }
 }
 
 export function createCandidateSession(
@@ -121,8 +188,12 @@ export function createCandidateSession(
     resumeText: string = ''
 ): SessionData {
     const id = Date.now();
+    const randomSuffix = Math.random().toString(36).substring(2, 9);
+    const secureToken = `ashvance_sec_${id}_${randomSuffix}`;
+
     const candidate: Candidate = {
         id,
+        secure_token: secureToken,
         name: name || 'Candidate',
         mobile: mobile || '+919876543210',
         email: email || 'candidate@ashvance.tech',
@@ -133,58 +204,14 @@ export function createCandidateSession(
         createdAt: new Date().toISOString(),
     };
 
-    const questions: QuestionItem[] = [
-        {
-            question_order: 1,
-            question_type: 'greeting',
-            stage: 'greeting',
-            question: `Hello ${candidate.name}! Welcome to your AI technical interview with ASHVANCE TECH for the ${candidate.position} role. Could you please start by giving me a brief introduction of yourself, your background, and key areas of expertise?`,
-        },
-        {
-            question_order: 2,
-            question_type: 'background',
-            stage: 'background',
-            question: `Thank you for sharing, ${candidate.name}. What technologies, frameworks, and engineering methodologies have you primarily focused on throughout your journey as a ${candidate.position}?`,
-        },
-        {
-            question_order: 3,
-            question_type: 'project_deep_dive',
-            stage: 'project_deep_dive',
-            question: `Could you walk me through the most significant project you have engineered? What was the overall architecture, and what technical hurdles did you overcome during implementation?`,
-        },
-        {
-            question_order: 4,
-            question_type: 'technical',
-            stage: 'technical',
-            question: `When building high-concurrency distributed systems, how do you handle database concurrency, caching layers, and graceful degradation during network partitions?`,
-        },
-        {
-            question_order: 5,
-            question_type: 'problem_solving',
-            stage: 'problem_solving',
-            question: `Can you describe a challenging production bug or performance bottleneck you encountered? How did you isolate root causes and ensure resilient long-term resolution?`,
-        },
-        {
-            question_order: 6,
-            question_type: 'behavioral',
-            stage: 'behavioral',
-            question: `How do you approach collaboration in an agile environment when cross-functional priorities change? How do you communicate technical trade-offs to non-technical stakeholders?`,
-        },
-        {
-            question_order: 7,
-            question_type: 'candidate_questions',
-            stage: 'candidate_questions',
-            question: `Thank you, ${candidate.name}. That concludes our evaluation sections. Do you have any questions for ASHVANCE TECH regarding our technology roadmap or engineering vision?`,
-        },
-    ];
-
     const session: SessionData = {
         candidate,
         otpCode: '123456',
-        questions,
+        questions: createDefaultQuestions(candidate.name, candidate.position),
         answers: [],
         currentQuestionIndex: 0,
         status: 'registered',
+        warnings: { tabSwitchCount: 0, copyPasteCount: 0 },
     };
 
     saveSession(session);
