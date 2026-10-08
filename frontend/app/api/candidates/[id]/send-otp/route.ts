@@ -14,6 +14,24 @@ export async function POST(
             return NextResponse.json({ detail: 'Candidate session not found' }, { status: 404 });
         }
 
+        // Support optional body or query parameter for resilient email targeting across serverless cold starts
+        let bodyData: any = {};
+        try {
+            bodyData = await request.json();
+        } catch {}
+
+        const url = new URL(request.url);
+        const emailFromQuery = url.searchParams.get('email');
+        const targetEmail = (bodyData.email || emailFromQuery || session.candidate.email || '').trim();
+        const targetName = (bodyData.name || session.candidate.name || 'Candidate').trim();
+
+        if (targetEmail && targetEmail.includes('@')) {
+            session.candidate.email = targetEmail;
+        }
+        if (targetName) {
+            session.candidate.name = targetName;
+        }
+
         const now = Date.now();
         // Cooldown: 30 seconds
         if (session.lastOtpSentAt && now - session.lastOtpSentAt < 30000) {
@@ -24,7 +42,7 @@ export async function POST(
             );
         }
 
-        // Generate a new 6-digit OTP code
+        // Generate a fresh 6-digit numeric OTP code
         const freshOtp = generateOtpCode();
         session.otpCode = freshOtp;
         session.lastOtpSentAt = now;
@@ -35,7 +53,7 @@ export async function POST(
         const emailResult = await sendOtpEmail(session.candidate.email, session.candidate.name, freshOtp);
 
         if (!emailResult.success) {
-            console.error(`[OTP] Failed to deliver OTP email to candidate ${candidateId}: ${emailResult.error}`);
+            console.error(`[OTP] Failed to deliver OTP email to candidate ${candidateId} (${session.candidate.email}): ${emailResult.error}`);
             return NextResponse.json(
                 {
                     detail: emailResult.error || 'We could not send your verification email. Please try again shortly.',

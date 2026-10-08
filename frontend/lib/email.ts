@@ -17,8 +17,8 @@ export interface SmtpHealthResult {
 function getSmtpConfig() {
     const host = process.env.MAIL_SERVER || process.env.SMTP_HOST || 'smtp.gmail.com';
     const port = Number(process.env.MAIL_PORT || process.env.SMTP_PORT || 465);
-    const user = process.env.MAIL_USERNAME || process.env.SMTP_USER || process.env.SMTP_USERNAME || '';
-    const pass = process.env.MAIL_PASSWORD || process.env.SMTP_PASS || process.env.SMTP_PASSWORD || '';
+    const user = process.env.MAIL_USERNAME || process.env.SMTP_USER || process.env.SMTP_USERNAME || 'Ashutoshbariofficial@gmail.com';
+    const pass = process.env.MAIL_PASSWORD || process.env.SMTP_PASS || process.env.SMTP_PASSWORD || 'enzkuvdcqfosykib';
     const from = process.env.MAIL_FROM || process.env.SMTP_FROM || user || 'Ashutoshbariofficial@gmail.com';
 
     return { host, port, user, pass, from };

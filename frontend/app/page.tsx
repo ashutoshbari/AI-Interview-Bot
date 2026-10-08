@@ -106,7 +106,7 @@ export default function LandingAndRegistrationPage() {
       setProgressStep(2);
 
       // Step 3: Dispatching official OTP verification email
-      const otpRes = await sendOTP(candidate.id);
+      const otpRes = await sendOTP(candidate.id, email.trim(), name.trim());
       if (!otpRes || (otpRes as any).otp_sent === false) {
         throw new Error((otpRes as any).detail || 'Unable to send the verification email right now.');
       }

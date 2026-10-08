@@ -119,8 +119,8 @@ export function getSession(id: number): SessionData | undefined {
         mobile: '+919876543210',
         email: 'candidate@ashvance.tech',
         position: 'Software Engineer',
-        isVerified: true,
-        status: 'verified',
+        isVerified: false,
+        status: 'registered',
         createdAt: new Date().toISOString(),
     };
 
@@ -130,7 +130,7 @@ export function getSession(id: number): SessionData | undefined {
         questions: createDefaultQuestions('Candidate', 'Software Engineer'),
         answers: [],
         currentQuestionIndex: 0,
-        status: 'verified',
+        status: 'registered',
         warnings: { tabSwitchCount: 0, copyPasteCount: 0 },
     };
 

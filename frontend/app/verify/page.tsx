@@ -142,9 +142,9 @@ function VerifyContent() {
   const handleResend = async () => {
     if (cooldown > 0) return;
     try {
-      await sendOTP(candidateId);
+      await sendOTP(candidateId, candidateEmail, candidateName);
       setCooldown(60);
-      setSuccessMsg('📨 A fresh 6-digit verification code has been dispatched.');
+      setSuccessMsg('📨 A fresh 6-digit verification code has been dispatched to your email.');
       setError('');
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (err: any) {
