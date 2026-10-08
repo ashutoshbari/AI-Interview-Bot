@@ -21,7 +21,6 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Backgro
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from openai import AsyncOpenAI
 
 from app.database import get_db
 from app.models.candidate import Candidate
@@ -42,7 +41,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 
-client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY or "placeholder")
+
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -485,8 +484,8 @@ Respond directly to the candidate in a helpful, warm, natural speaking tone (1-3
 }}
 """
     result = await openai_safe_call(
-        client.chat.completions.create,
-        model=settings.OPENAI_MODEL,
+        None,  # client not used — routed to Gemini via openai_safe_call
+        model="gemini",
         messages=[
             {"role": "system", "content": "You are a professional, friendly technical interviewer conversing live with a candidate. Return JSON only."},
             {"role": "user", "content": prompt}
@@ -656,8 +655,8 @@ Return ONLY valid JSON:
 """
 
     result = await openai_safe_call(
-        client.chat.completions.create,
-        model=settings.OPENAI_MODEL,
+        None,
+        model="gemini",
         messages=[
             {"role": "system", "content": "You are a world-class career coach. Return only valid JSON."},
             {"role": "user", "content": suggestions_prompt}
@@ -743,6 +742,7 @@ async def get_questions_by_token(
 async def submit_answer_by_token(
     token: str,
     payload: AnswerSubmit,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     """Submit candidate response and evaluate by secure token."""
@@ -750,7 +750,7 @@ async def submit_answer_by_token(
     candidate = cand_result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Interview link not found")
-    return await submit_answer(candidate.id, payload, db)
+    return await submit_answer(candidate.id, payload, background_tasks, db)
 
 
 @router.post("/token/{token}/clarify")

@@ -152,12 +152,6 @@ function VerifyContent() {
     }
   };
 
-  const handleQuickDemoBypass = () => {
-    const demoCode = ['1', '2', '3', '4', '5', '6'];
-    setOtp(demoCode);
-    triggerVerification('123456');
-  };
-
   // Masked email representation
   const maskedEmail = candidateEmail
     ? candidateEmail.replace(/^(.)(.*)(@.*)$/, (_, a, b, c) => `${a}***${c}`)
@@ -275,17 +269,6 @@ function VerifyContent() {
                 <span>Verify &amp; Enter Interview ➔</span>
               )}
             </button>
-
-            {/* Demo 1-Click Auto Fill */}
-            <div className="pt-2 border-t border-[var(--border)] text-center">
-              <button
-                type="button"
-                onClick={handleQuickDemoBypass}
-                className="text-xs text-[var(--secondary)] hover:underline transition-colors py-1 px-3 rounded-lg hover:bg-[var(--surface-hover)] inline-flex items-center gap-1.5 font-medium"
-              >
-                <span>⚡ Test Mode: Instant Auto-fill (123456)</span>
-              </button>
-            </div>
           </form>
 
           {/* Resend Code Section */}

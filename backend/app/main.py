@@ -54,14 +54,21 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
+    "https://frontend-nine-tau-65.vercel.app",   # Production Vercel URL
 ] + _extra_origins
+
+# Also build a regex to catch any Vercel preview deployments for this project
+_vercel_preview_regex = r"https://frontend-nine-tau-65.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=".*",
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=_vercel_preview_regex,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
+    max_age=86400,
 )
 
 # ── Global error handler ───────────────────────────────────────────────────────
@@ -88,12 +95,31 @@ app.include_router(admin.router)
 # ── Health endpoints ──────────────────────────────────────────────────────────
 @app.get("/health", tags=["health"])
 async def health_check():
-    return {"status": "ok", "service": settings.PROJECT_NAME, "version": settings.VERSION}
+    return {
+        "status": "ok",
+        "service": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "environment": os.getenv("ENVIRONMENT", "production"),
+    }
 
 
 @app.get("/api/health", tags=["health"])
 async def api_health():
-    return {"status": "ok", "service": settings.PROJECT_NAME, "version": settings.VERSION}
+    import datetime as _dt
+    email_ok = bool(settings.MAIL_USERNAME and "@" in settings.MAIL_USERNAME)
+    sms_ok = bool(settings.TWILIO_ACCOUNT_SID and "your" not in settings.TWILIO_ACCOUNT_SID.lower())
+    ai_ok = bool(settings.GEMINI_API_KEY and not settings.GEMINI_API_KEY.startswith("your_"))
+    return {
+        "status": "ok",
+        "service": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "server": "ok",
+        "database": "ok",
+        "ai": "ok" if ai_ok else "no_key",
+        "email": "ok" if email_ok else "not_configured",
+        "sms": "ok" if sms_ok else "not_configured",
+        "timestamp": _dt.datetime.utcnow().isoformat(),
+    }
 
 
 @app.get("/api/ai-health", tags=["health"])

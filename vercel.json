@@ -2,5 +2,8 @@
   "framework": "nextjs",
   "installCommand": "cd frontend && npm install",
   "buildCommand": "cd frontend && npm run build",
-  "outputDirectory": "frontend/.next"
+  "outputDirectory": "frontend/.next",
+  "env": {
+    "NEXT_PUBLIC_API_URL": "https://ai-interview-bot-backend.onrender.com"
+  }
 }

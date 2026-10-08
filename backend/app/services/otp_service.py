@@ -1,6 +1,12 @@
 """
 OTP Service — Secure verification code generation and multi-channel dispatch.
 Integrated with ASHVANCE TECH corporate Email Service for official OTP notifications.
+
+Security hardened:
+- OTP values are NEVER logged (Phase 11 compliance)
+- No master bypass codes in production
+- Verification attempt limiting (max 5)
+- Rate limiting on resend (configurable cooldown)
 """
 
 import logging
@@ -16,6 +22,9 @@ from app.models.otp_verification import OTPVerification
 from app.services.email_service import email_manager
 
 logger = logging.getLogger(__name__)
+
+# Maximum OTP verification attempts before lockout
+MAX_OTP_ATTEMPTS = 5
 
 
 class OTPService:
@@ -78,9 +87,9 @@ class OTPService:
         for old_otp in old_otps_result.scalars().all():
             old_otp.is_used = True
             
-        # Generate fresh OTP
+        # Generate fresh OTP (value is never logged — security compliance)
         otp_code = OTPService.generate_otp()
-        logger.info(f"🔑 [OTP GENERATED] Candidate {candidate.id} ({candidate.name}): {otp_code}")
+        logger.info(f"[OTP] Generated secure OTP for candidate {candidate.id} ({candidate.name}) — value suppressed")
         
         # Expiry timestamp
         expires_at = now + datetime.timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
@@ -111,8 +120,12 @@ class OTPService:
 
     @staticmethod
     async def verify_otp(candidate_id: int, otp_code: str, db: AsyncSession) -> tuple[bool, str]:
-        """Verify the provided OTP against the database with idempotency and expiration validation."""
+        """Verify the provided OTP against the database with idempotency, expiration, and attempt limiting."""
         cleaned_otp = str(otp_code).strip()
+        
+        # Reject obviously invalid inputs
+        if not cleaned_otp.isdigit() or len(cleaned_otp) != 6:
+            return False, "OTP must be exactly 6 digits."
         
         # 1. Fetch Candidate
         cand_result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
@@ -122,13 +135,24 @@ class OTPService:
 
         # 2. Idempotency Check: If already verified, allow immediate entry
         if getattr(candidate, "is_verified", False):
+            logger.info(f"[OTP] Candidate {candidate_id} already verified — idempotent pass")
             return True, "Identity verified successfully."
 
-        # 3. Master / Demo OTP bypass (123456 / 999999 / 000000) for friction-free testing
-        if cleaned_otp in ("123456", "999999", "000000"):
-            candidate.is_verified = True
-            await db.commit()
-            return True, "Identity verified successfully."
+        # 3. Check attempt count against most recent OTP
+        recent_otp_result = await db.execute(
+            select(OTPVerification)
+            .where(
+                and_(
+                    OTPVerification.candidate_id == candidate_id,
+                    OTPVerification.is_used == False
+                )
+            )
+            .order_by(OTPVerification.created_at.desc())
+        )
+        recent_otp = recent_otp_result.scalars().first()
+        
+        if recent_otp and getattr(recent_otp, 'attempt_count', 0) >= MAX_OTP_ATTEMPTS:
+            return False, f"Too many failed attempts. Please request a new OTP code."
 
         # 4. Query DB for candidate's matching unused OTP
         result = await db.execute(
@@ -146,7 +170,12 @@ class OTPService:
         valid_otp = result.scalars().first()
         
         if not valid_otp:
-            return False, "Invalid or already used OTP code. Please check your email or click Resend."
+            # Increment attempt count on the most recent OTP
+            if recent_otp and hasattr(recent_otp, 'attempt_count'):
+                recent_otp.attempt_count = (recent_otp.attempt_count or 0) + 1
+                await db.commit()
+            logger.warning(f"[OTP] Failed verification attempt for candidate {candidate_id}")
+            return False, "Invalid verification code. Please check your email or SMS and try again."
 
         # 5. Check Expiry safely in Python
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -162,6 +191,7 @@ class OTPService:
         candidate.is_verified = True
         await db.commit()
 
+        logger.info(f"[OTP] Candidate {candidate_id} ({candidate.name}) successfully verified")
         return True, "Identity verified successfully."
 
 

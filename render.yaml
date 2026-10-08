@@ -8,6 +8,8 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
       - key: MAIL_USERNAME
         sync: false
       - key: MAIL_PASSWORD
@@ -19,18 +21,24 @@ services:
       - key: MAIL_PORT
         value: "587"
       - key: FRONTEND_URL
-        sync: false
+        value: "https://frontend-nine-tau-65.vercel.app"
       - key: DATABASE_URL
         value: sqlite+aiosqlite:///./ai_interview.db
       - key: UPLOAD_DIR
         value: uploads
-
-  - type: web
-    name: ai-interview-bot-frontend
-    runtime: node
-    rootDir: frontend
-    buildCommand: npm install && npm run build
-    startCommand: npm start
-    envVars:
-      - key: NEXT_PUBLIC_API_URL
-        value: ""
+      - key: OTP_EXPIRY_MINUTES
+        value: "5"
+      - key: OTP_RESEND_COOLDOWN_SECONDS
+        value: "60"
+      - key: QUESTIONS_PER_INTERVIEW
+        value: "12"
+      - key: ENVIRONMENT
+        value: production
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: INTERVIEWER_EMAIL
+        sync: false
