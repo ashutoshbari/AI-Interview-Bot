@@ -105,14 +105,12 @@ export default function LandingAndRegistrationPage() {
       const candidate = await registerCandidate(formData);
       setProgressStep(2);
 
-      // Step 3: Triggering OTP verification
-      try {
-        await sendOTP(candidate.id);
-        setProgressStep(3);
-      } catch (err) {
-        console.log('OTP trigger handled in background:', err);
+      // Step 3: Dispatching official OTP verification email
+      const otpRes = await sendOTP(candidate.id);
+      if (!otpRes || (otpRes as any).otp_sent === false) {
+        throw new Error((otpRes as any).detail || 'Unable to send the verification email right now.');
       }
-
+      setProgressStep(3);
       setProgressStep(4);
 
       setTimeout(() => {
@@ -125,11 +123,12 @@ export default function LandingAndRegistrationPage() {
     } catch (err: any) {
       setIsSubmitting(false);
       setStep('form');
+      const detailMsg =
+        err?.response?.data?.detail ||
+        err?.message ||
+        'Unable to connect to the verification service. Please try again.';
       setErrors({
-        global:
-          err?.response?.data?.detail ||
-          err?.message ||
-          'Registration encountered a network issue. Please retry.',
+        global: detailMsg,
       });
     }
   };

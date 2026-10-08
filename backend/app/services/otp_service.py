@@ -105,17 +105,28 @@ class OTPService:
         await db.commit()
         
         channels_sent = []
-        
-        # Dispatch official ASHVANCE TECH OTP Email asynchronously
+        email_err = None
+
+        # Dispatch official ASHVANCE TECH OTP Email synchronously in worker thread
         if candidate.email:
-            email_manager.send_otp_email(candidate.email, candidate.name, otp_code)
-            channels_sent.append("email")
-                
+            email_success, email_detail = await asyncio.to_thread(
+                email_manager.send_otp_email, candidate.email, candidate.name, otp_code
+            )
+            if email_success:
+                channels_sent.append("email")
+            else:
+                email_err = email_detail
+                logger.error(f"[OTP] Email provider failed for candidate {candidate.id}: {email_detail}")
+
         # Dispatch SMS in background worker
         if candidate.mobile:
-            asyncio.create_task(asyncio.to_thread(OTPService.send_otp_sms, candidate.mobile, otp_code))
-            channels_sent.append("sms")
-                
+            sms_success = await asyncio.to_thread(OTPService.send_otp_sms, candidate.mobile, otp_code)
+            if sms_success:
+                channels_sent.append("sms")
+
+        if not channels_sent:
+            raise RuntimeError(email_err or "Unable to send the verification email right now.")
+
         return channels_sent
 
     @staticmethod

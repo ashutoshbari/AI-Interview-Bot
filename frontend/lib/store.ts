@@ -35,10 +35,16 @@ export interface SessionData {
     answers: AnswerItem[];
     currentQuestionIndex: number;
     status: string;
+    lastOtpSentAt?: number;
+    otpAttempts?: number;
     warnings?: {
         tabSwitchCount: number;
         copyPasteCount: number;
     };
+}
+
+export function generateOtpCode(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 // Global sessions map for serverless execution runtime

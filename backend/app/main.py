@@ -126,3 +126,10 @@ async def api_health():
 async def ai_health_status():
     """Returns the AI provider connectivity status."""
     return health_checker.get_status()
+
+
+@app.get("/api/email-health", tags=["health"])
+async def email_health_status():
+    """Returns the internal SMTP connectivity and authentication status."""
+    from app.services.email_service import check_smtp_health
+    return check_smtp_health()

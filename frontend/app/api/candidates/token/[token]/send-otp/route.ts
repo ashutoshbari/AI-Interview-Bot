@@ -1,21 +1,20 @@
 import { NextResponse } from 'next/server';
-import { getSession, saveSession, generateOtpCode } from '@/lib/store';
+import { getSessionByToken, saveSession, generateOtpCode } from '@/lib/store';
 import { sendOtpEmail } from '@/lib/email';
 
 export async function POST(
     request: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: { token: string } }
 ) {
     try {
-        const candidateId = Number(params.id);
-        const session = getSession(candidateId);
+        const token = params.token;
+        const session = getSessionByToken(token);
 
         if (!session) {
-            return NextResponse.json({ detail: 'Candidate session not found' }, { status: 404 });
+            return NextResponse.json({ detail: 'Token session not found' }, { status: 404 });
         }
 
         const now = Date.now();
-        // Cooldown: 30 seconds
         if (session.lastOtpSentAt && now - session.lastOtpSentAt < 30000) {
             const remaining = Math.ceil((30000 - (now - session.lastOtpSentAt)) / 1000);
             return NextResponse.json(
@@ -24,18 +23,14 @@ export async function POST(
             );
         }
 
-        // Generate a new 6-digit OTP code
         const freshOtp = generateOtpCode();
         session.otpCode = freshOtp;
         session.lastOtpSentAt = now;
-        session.otpAttempts = 0; // reset attempts for fresh code
+        session.otpAttempts = 0;
         saveSession(session);
 
-        // Send OTP email
         const emailResult = await sendOtpEmail(session.candidate.email, session.candidate.name, freshOtp);
-
         if (!emailResult.success) {
-            console.error(`[OTP] Failed to deliver OTP email to candidate ${candidateId}: ${emailResult.error}`);
             return NextResponse.json(
                 {
                     detail: emailResult.error || 'We could not send your verification email. Please try again shortly.',
@@ -46,7 +41,6 @@ export async function POST(
             );
         }
 
-        console.log(`[OTP] Successfully dispatched OTP email to candidate ${candidateId} (${session.candidate.email})`);
         return NextResponse.json({
             success: true,
             otp_sent: true,
@@ -54,7 +48,6 @@ export async function POST(
             channels: ['email'],
         });
     } catch (error: any) {
-        console.error('API send-otp error:', error);
         return NextResponse.json(
             { detail: 'Unable to send the verification email right now.', success: false, otp_sent: false },
             { status: 500 }

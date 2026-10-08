@@ -201,9 +201,12 @@ async def send_otp(candidate_id: int, db: AsyncSession = Depends(get_db)):
         return OTPSendResponse(message="OTP sent successfully", channels=channels)
     except ValueError as e:
         raise HTTPException(status_code=429, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"[OTP] Provider failure for candidate {candidate_id}: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to send OTP for candidate {candidate_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to send OTP.")
+        raise HTTPException(status_code=500, detail="Unable to send the verification email right now.")
 
 
 @router.post("/{candidate_id}/verify-otp", response_model=OTPVerifyResponse)

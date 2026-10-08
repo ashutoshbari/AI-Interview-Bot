@@ -175,7 +175,7 @@ export async function playTTS(text: string): Promise<void> {
 }
 
 // Send OTP
-export async function sendOTP(candidateId: number): Promise<{ message: string; channels: string[] }> {
+export async function sendOTP(candidateId: number): Promise<{ success: boolean; otp_sent: boolean; message: string; channels: string[] }> {
     const response = await api.post(`/api/candidates/${candidateId}/send-otp`);
     return response.data;
 }
