@@ -14,6 +14,23 @@ export async function POST(
             return NextResponse.json({ detail: 'Token session not found' }, { status: 404 });
         }
 
+        let bodyData: any = {};
+        try {
+            bodyData = await request.json();
+        } catch {}
+
+        const url = new URL(request.url);
+        const emailFromQuery = url.searchParams.get('email');
+        const targetEmail = (bodyData.email || emailFromQuery || session.candidate.email || '').trim();
+        const targetName = (bodyData.name || session.candidate.name || 'Candidate').trim();
+
+        if (targetEmail && targetEmail.includes('@')) {
+            session.candidate.email = targetEmail;
+        }
+        if (targetName) {
+            session.candidate.name = targetName;
+        }
+
         const now = Date.now();
         if (session.lastOtpSentAt && now - session.lastOtpSentAt < 30000) {
             const remaining = Math.ceil((30000 - (now - session.lastOtpSentAt)) / 1000);
